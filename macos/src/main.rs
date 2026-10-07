@@ -11,9 +11,10 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
-    NSBackingStoreType, NSButton, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSSavePanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate,
-    NSTabViewItem, NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSBackingStoreType, NSButton, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem,
+    NSModalResponseOK, NSOpenPanel, NSSavePanel, NSSplitView, NSSplitViewDividerStyle, NSTabView,
+    NSTabViewDelegate, NSTabViewItem, NSTextField, NSView, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
@@ -80,6 +81,30 @@ struct NotifyHeader {
     id_from: usize,
     code: u32,
     position: isize,
+}
+
+define_class!(
+    // Makes Escape cancel a modal alert whose Cancel button keeps the Return key.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    struct EscapeCancels;
+
+    impl EscapeCancels {
+        #[unsafe(method(performKeyEquivalent:))]
+        fn perform_key_equivalent(&self, e: &NSEvent) -> bool {
+            let esc = e.keyCode() == 53;
+            if esc {
+                NSApplication::sharedApplication(self.mtm()).stopModalWithCode(NSAlertSecondButtonReturn);
+            }
+            esc
+        }
+    }
+);
+
+impl EscapeCancels {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        unsafe { msg_send![Self::alloc(mtm), init] }
+    }
 }
 
 define_class!(
@@ -290,7 +315,10 @@ define_class!(
             let c = &self.fif_ui().c;
             match r {
                 Err(e) => c.set_status(&e),
-                Ok(out) if replace => c.set_status(&search::replace_in_files_status(out.count)),
+                Ok(out) if replace => {
+                    c.set_status(&search::replace_in_files_status(out.count, &out.skipped));
+                    self.reload_changed(&out.changed);
+                }
                 Ok(out) => {
                     c.set_status("");
                     self.show_results(out.lines);
@@ -341,6 +369,10 @@ define_class!(
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _a: &NSApplication) -> NSApplicationTerminateReply {
+            if self.ivars().fif_running.get() {
+                self.alert("Find in Files is still running.", "Quit again when it is done.", &["OK"]);
+                return NSApplicationTerminateReply::TerminateCancel;
+            }
             let n = self.ivars().tabs.borrow().len();
             for i in 0..n {
                 self.tab_view().selectTabViewItemAtIndex(i as isize);
@@ -573,6 +605,7 @@ impl App {
             a.addButtonWithTitle(&ns("OK")).setKeyEquivalent(&ns(""));
             a.addButtonWithTitle(&ns("Cancel"))
                 .setKeyEquivalent(&ns("\r"));
+            a.setAccessoryView(Some(&EscapeCancels::new(self.mtm())));
             if a.runModal() != NSAlertFirstButtonReturn {
                 return;
             }
@@ -584,6 +617,7 @@ impl App {
             hidden: panel::on(&u.hidden),
             opts,
             replace,
+            skip: self.unsaved_paths(),
         };
         u.c.set_status(if replace {
             "Replace In Files progress..."
@@ -593,13 +627,37 @@ impl App {
         self.ivars().fif_running.set(true);
         let app = self as *const Self as usize;
         std::thread::spawn(move || {
-            let r = search::find_in_files(&args);
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                search::find_in_files(&args)
+            }))
+            .unwrap_or_else(|_| Err("Find in Files stopped because of an internal error.".into()));
             *FIF_DONE.lock().unwrap() = Some((args.replace, r));
             let app = unsafe { &*(app as *const AnyObject) };
             let _: () = unsafe {
                 msg_send![app, performSelectorOnMainThread: sel!(fifDone:), withObject: None::<&AnyObject>, waitUntilDone: false]
             };
         });
+    }
+
+    fn unsaved_paths(&self) -> Vec<PathBuf> {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        tabs.iter()
+            .filter(|t| sci::is_modified(&t.view))
+            .filter_map(|t| t.path.as_deref().map(search::canonical))
+            .collect()
+    }
+
+    fn reload_changed(&self, changed: &[PathBuf]) {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        for t in tabs {
+            let Some(p) = &t.path else { continue };
+            if sci::is_modified(&t.view) || !changed.contains(&search::canonical(p)) {
+                continue;
+            }
+            if let Ok(b) = std::fs::read(p) {
+                sci::reload(&t.view, &b);
+            }
+        }
     }
 
     fn show_results(&self, lines: Vec<Line>) {
@@ -800,6 +858,7 @@ fn submenu(mtm: MainThreadMarker, bar: &NSMenu, title: &str, items: Vec<Retained
 
 fn main() {
     let mtm = MainThreadMarker::new().unwrap();
+    search::warm_up();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let d = App::new(mtm);

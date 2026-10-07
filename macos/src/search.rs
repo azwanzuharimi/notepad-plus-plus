@@ -66,11 +66,9 @@ impl Drop for Doc {
 }
 
 impl Doc {
-    pub fn new(b: &[u8]) -> Doc {
-        Doc {
-            p: unsafe { npp_doc_new(b.as_ptr(), b.len() as isize) },
-            owned: true,
-        }
+    pub fn new(b: &[u8]) -> Option<Doc> {
+        let p = unsafe { npp_doc_new(b.as_ptr(), b.len() as isize) };
+        (!p.is_null()).then_some(Doc { p, owned: true })
     }
 
     pub fn from_pointer(p: isize) -> Doc {
@@ -150,6 +148,13 @@ impl Doc {
 
     pub fn undo_group(&self, begin: bool) {
         unsafe { npp_doc_undo_group(self.p, begin as c_int) }
+    }
+}
+
+// Fills the case conversion tables on the main thread before any search thread starts.
+pub fn warm_up() {
+    if let Some(d) = Doc::new(b"A") {
+        let _ = d.find(0, 1, b"a", 0);
     }
 }
 
@@ -363,7 +368,11 @@ pub fn process(
         out.push((s, e));
         let n = e - s;
         let delta = if replace {
-            doc.replace(s, n, &with, o.regex()) - n
+            let r = doc.replace(s, n, &with, o.regex());
+            if r < 0 {
+                return Err("Replace failed".into());
+            }
+            r - n
         } else {
             0
         };
@@ -457,12 +466,20 @@ pub const TOP_REACHED: &str =
 pub const REPLACE_END_REACHED: &str = "Replace: Reached document end, started from top.";
 pub const REPLACE_TOP_REACHED: &str = "Replace: Reached document beginning, started from bottom.";
 
-pub fn replace_in_files_status(n: usize) -> String {
-    if n == 1 {
-        "Replace in Files: 1 occurrence was replaced.".into()
+pub fn replace_in_files_status(n: usize, skipped: &[PathBuf]) -> String {
+    let mut m = if n == 1 {
+        "Replace in Files: 1 occurrence was replaced.".to_string()
     } else {
         format!("Replace in Files: {n} occurrences were replaced.")
+    };
+    if !skipped.is_empty() {
+        let names: Vec<String> = skipped.iter().map(|p| p.display().to_string()).collect();
+        m += &format!(
+            "\nSkipped (unsaved changes in an open tab): {}",
+            names.join(", ")
+        );
     }
+    m
 }
 
 pub fn patterns(filters: &str) -> Vec<String> {
@@ -669,6 +686,8 @@ pub fn find_all_lines(doc: &Doc, o: &Opts, path: &Path) -> Result<Vec<Line>, Str
 pub struct FifOut {
     pub lines: Vec<Line>,
     pub count: usize,
+    pub changed: Vec<PathBuf>,
+    pub skipped: Vec<PathBuf>,
 }
 
 pub struct FifArgs {
@@ -678,6 +697,11 @@ pub struct FifArgs {
     pub hidden: bool,
     pub opts: Opts,
     pub replace: bool,
+    pub skip: Vec<PathBuf>,
+}
+
+pub fn canonical(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
 // Find in Files and Replace in Files; replace writes only files that change.
@@ -689,18 +713,25 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
     let files = walk(&a.dir, &patterns(&a.filters), a.sub, a.hidden);
     let mut body = vec![];
     let (mut count, mut nfiles) = (0, 0);
+    let (mut changed, mut skipped) = (vec![], vec![]);
     for f in &files {
+        let c = canonical(f);
+        if a.replace && a.skip.contains(&c) {
+            skipped.push(f.clone());
+            continue;
+        }
         let Ok(b) = std::fs::read(f) else { continue };
         if is_binary(&b) {
             continue;
         }
-        let doc = Doc::new(&b);
+        let Some(doc) = Doc::new(&b) else { continue };
         if a.replace {
             let n = process(&doc, &a.opts, true, true, (0, doc.len()))?.len();
             if n > 0 {
                 if let Err(e) = std::fs::write(f, doc.text()) {
                     return Err(format!("{}: {e}", f.display()));
                 }
+                changed.push(c);
             }
             count += n;
         } else {
@@ -724,7 +755,12 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
         });
         lines.extend(body);
     }
-    Ok(FifOut { lines, count })
+    Ok(FifOut {
+        lines,
+        count,
+        changed,
+        skipped,
+    })
 }
 
 #[cfg(test)]
@@ -740,12 +776,12 @@ mod tests {
     }
 
     fn count(text: &str, o: &Opts) -> usize {
-        let d = Doc::new(text.as_bytes());
+        let d = Doc::new(text.as_bytes()).unwrap();
         process(&d, o, false, false, (0, d.len())).unwrap().len()
     }
 
     fn replaced(text: &str, o: &Opts) -> (usize, String) {
-        let d = Doc::new(text.as_bytes());
+        let d = Doc::new(text.as_bytes()).unwrap();
         let n = replace_all(&d, o, (0, d.len())).unwrap();
         (n, String::from_utf8(d.text()).unwrap())
     }
@@ -889,6 +925,7 @@ mod tests {
             hidden: false,
             opts: opts("foo"),
             replace: false,
+            skip: vec![],
         };
         let out = find_in_files(&a).unwrap();
         let text: Vec<String> = out
@@ -922,6 +959,41 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(d.join("b.md")).unwrap(),
             "foo bar\nbaz foo foo\n"
+        );
+    }
+
+    #[test]
+    fn replace_in_files_skips_listed_files() {
+        let d = tmp("skip");
+        let a = FifArgs {
+            dir: d.clone(),
+            filters: "*.txt".into(),
+            sub: true,
+            hidden: false,
+            opts: Opts {
+                replace: "X".into(),
+                ..opts("foo")
+            },
+            replace: true,
+            skip: vec![canonical(&d.join("sub/c.txt"))],
+        };
+        let out = find_in_files(&a).unwrap();
+        assert_eq!(out.skipped, [d.join("sub/c.txt")]);
+        assert_eq!(
+            std::fs::read_to_string(d.join("sub/c.txt")).unwrap(),
+            "foo bar\nbaz foo foo\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("a.txt")).unwrap(),
+            "X bar\nbaz X X\n"
+        );
+        assert!(out.changed.contains(&canonical(&d.join("a.txt"))));
+        assert!(!out.changed.contains(&canonical(&d.join("sub/c.txt"))));
+        assert!(
+            replace_in_files_status(out.count, &out.skipped).ends_with(&format!(
+                "\nSkipped (unsaved changes in an open tab): {}",
+                d.join("sub/c.txt").display()
+            ))
         );
     }
 
@@ -984,7 +1056,7 @@ mod tests {
             mode: Mode::Regex,
             ..opts("(")
         };
-        let d = Doc::new(b"abc");
+        let d = Doc::new(b"abc").unwrap();
         assert!(process(&d, &bad, false, false, (0, 3)).is_err());
         let dot = Opts {
             mode: Mode::Regex,
@@ -1016,7 +1088,7 @@ mod tests {
 
     #[test]
     fn replace_all_is_one_undo_step() {
-        let d = Doc::new(b"a a a");
+        let d = Doc::new(b"a a a").unwrap();
         assert_eq!(
             replace_all(
                 &d,
@@ -1036,7 +1108,7 @@ mod tests {
 
     #[test]
     fn find_next_wraps() {
-        let d = Doc::new(b"foo bar foo");
+        let d = Doc::new(b"foo bar foo").unwrap();
         let o = opts("foo");
         assert_eq!(
             find_next(&d, &o, (0, 0), false, Next::Find).unwrap(),

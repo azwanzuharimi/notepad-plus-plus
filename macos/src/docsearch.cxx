@@ -44,11 +44,18 @@ struct Markings {
 extern "C" {
 
 Document *npp_doc_new(const char *text, intptr_t len) {
-	auto *d = new Document(Scintilla::DocumentOption::Default);
-	d->AddRef();
-	d->SetDBCSCodePage(SC_CP_UTF8);
-	d->InsertString(0, text, len);
-	return d;
+	Document *d = nullptr;
+	try {
+		d = new Document(Scintilla::DocumentOption::Default);
+		d->AddRef();
+		d->SetDBCSCodePage(SC_CP_UTF8);
+		d->InsertString(0, text, len);
+		return d;
+	} catch (std::exception &) {
+		if (d)
+			d->Release();
+		return nullptr;
+	}
 }
 
 void npp_doc_free(Document *d) { d->Release(); }
@@ -89,25 +96,25 @@ intptr_t npp_doc_find(Document *d, intptr_t minPos, intptr_t maxPos, const char 
 
 const char *npp_regex_error() { return lastError.c_str(); }
 
-// Replaces [pos, pos + len) and returns the new length; regex mode expands back references of the last match.
+// Replaces [pos, pos + len) and returns the new length, or -1 on failure; regex mode expands back references of the last match.
 intptr_t npp_doc_replace(Document *d, intptr_t pos, intptr_t len, const char *s, intptr_t slen, int regex) {
-	std::string text(s, slen);
-	if (regex) {
-		Sci::Position l = slen;
-		try {
+	try {
+		std::string text(s, slen);
+		if (regex) {
+			Sci::Position l = slen;
 			const char *p = d->SubstituteByPosition(s, &l);
 			if (!p)
 				return len;
 			text.assign(p, l);
-		} catch (std::exception &) {
-			return len;
 		}
+		d->BeginUndoAction();
+		d->DeleteChars(pos, len);
+		const intptr_t n = d->InsertString(pos, text.data(), text.size());
+		d->EndUndoAction();
+		return n;
+	} catch (std::exception &) {
+		return -1;
 	}
-	d->BeginUndoAction();
-	d->DeleteChars(pos, len);
-	const intptr_t n = d->InsertString(pos, text.data(), text.size());
-	d->EndUndoAction();
-	return n;
 }
 
 void npp_doc_undo_group(Document *d, int begin) {
@@ -123,12 +130,16 @@ Markings *npp_markings_new() { return new Markings(); }
 
 // counts[i] is the number of segments on line i; pairs holds start and end of each segment.
 SearchResultMarkings *npp_markings_set(Markings *m, const intptr_t *counts, intptr_t nlines, const intptr_t *pairs) {
-	m->lines.assign(nlines, {});
-	for (intptr_t i = 0; i < nlines; i++) {
-		for (intptr_t k = 0; k < counts[i]; k++, pairs += 2)
-			m->lines[i]._segmentPostions.emplace_back(pairs[0], pairs[1]);
+	try {
+		m->lines.assign(nlines, {});
+		for (intptr_t i = 0; i < nlines; i++) {
+			for (intptr_t k = 0; k < counts[i]; k++, pairs += 2)
+				m->lines[i]._segmentPostions.emplace_back(pairs[0], pairs[1]);
+		}
+	} catch (std::exception &) {
+		m->lines.clear();
 	}
-	m->s._length = nlines;
+	m->s._length = static_cast<intptr_t>(m->lines.size());
 	m->s._markings = m->lines.data();
 	return &m->s;
 }

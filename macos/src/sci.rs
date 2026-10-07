@@ -12,7 +12,9 @@ pub const SCN_SAVEPOINTREACHED: u32 = 2002;
 pub const SCN_SAVEPOINTLEFT: u32 = 2003;
 pub const SCN_DOUBLECLICK: u32 = 2006;
 pub const RESULTS_ID: usize = 1;
+const SCI_CLEARALL: u32 = 2004;
 const SCI_GETCURRENTPOS: u32 = 2008;
+const SCI_SETUNDOCOLLECTION: u32 = 2012;
 const SCI_GOTOLINE: u32 = 2024;
 const SCI_GETSELECTIONSTART: u32 = 2143;
 const SCI_GETSELECTIONEND: u32 = 2145;
@@ -103,6 +105,11 @@ pub fn set_bytes(v: &NSView, b: &[u8]) {
     send(v, SCI_SETSAVEPOINT, 0, 0);
 }
 
+pub fn reload(v: &NSView, b: &[u8]) {
+    send(v, SCI_CLEARALL, 0, 0);
+    set_bytes(v, b);
+}
+
 pub fn bytes(v: &NSView) -> Vec<u8> {
     let n = send(v, SCI_GETLENGTH, 0, 0) as usize;
     let mut b = vec![0u8; n + 1];
@@ -142,6 +149,7 @@ pub fn goto_line(v: &NSView, line: isize) {
 // Search results view: the Notepad++ searchResult lexer reads the match offsets through @MarkingsStruct.
 pub fn setup_results(v: &NSView, cfg: &Config) -> usize {
     send(v, SCI_SETIDENTIFIER, RESULTS_ID, 0);
+    send(v, SCI_SETUNDOCOLLECTION, 0, 0);
     apply_language(
         v,
         cfg,
