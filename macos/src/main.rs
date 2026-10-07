@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod config;
 mod lang;
+mod panel;
 mod sci;
+mod search;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject, Sel};
@@ -9,16 +11,41 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
-    NSBackingStoreType, NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSTabView,
-    NSTabViewDelegate, NSTabViewItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSBackingStoreType, NSButton, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem,
+    NSModalResponseOK, NSOpenPanel, NSSavePanel, NSSplitView, NSSplitViewDividerStyle, NSTabView,
+    NSTabViewDelegate, NSTabViewItem, NSTextField, NSView, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
 };
+use panel::{Controls, Form};
+use search::{FifArgs, FifOut, Line, Next, Wrap};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+
+static FIF_DONE: Mutex<Option<(bool, Result<FifOut, String>)>> = Mutex::new(None);
+
+fn ns(s: &str) -> Retained<NSString> {
+    NSString::from_str(s)
+}
+
+struct FindUi {
+    form: Form,
+    c: Controls,
+    prev: Retained<NSButton>,
+}
+
+struct FifUi {
+    form: Form,
+    c: Controls,
+    filters: Retained<NSTextField>,
+    dir: Retained<NSTextField>,
+    sub: Retained<NSButton>,
+    hidden: Retained<NSButton>,
+}
 
 fn cfg() -> &'static config::Config {
     static C: OnceLock<config::Config> = OnceLock::new();
@@ -39,6 +66,14 @@ struct Ivars {
     tab_view: OnceCell<Retained<NSTabView>>,
     tabs: RefCell<Vec<Tab>>,
     untitled: Cell<u32>,
+    split: OnceCell<Retained<NSSplitView>>,
+    results: OnceCell<(Retained<NSView>, usize)>,
+    result_lines: RefCell<Vec<Line>>,
+    pending_hit: Cell<(isize, isize)>,
+    fif_running: Cell<bool>,
+    replacing: Cell<bool>,
+    find_ui: OnceCell<FindUi>,
+    fif_ui: OnceCell<FifUi>,
 }
 
 #[repr(C)]
@@ -46,6 +81,31 @@ struct NotifyHeader {
     hwnd_from: *mut c_void,
     id_from: usize,
     code: u32,
+    position: isize,
+}
+
+define_class!(
+    // Makes Escape cancel a modal alert whose Cancel button keeps the Return key.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    struct EscapeCancels;
+
+    impl EscapeCancels {
+        #[unsafe(method(performKeyEquivalent:))]
+        fn perform_key_equivalent(&self, e: &NSEvent) -> bool {
+            let esc = e.keyCode() == 53;
+            if esc {
+                NSApplication::sharedApplication(self.mtm()).stopModalWithCode(NSAlertSecondButtonReturn);
+            }
+            esc
+        }
+    }
+);
+
+impl EscapeCancels {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        unsafe { msg_send![Self::alloc(mtm), init] }
+    }
 }
 
 define_class!(
@@ -108,11 +168,189 @@ define_class!(
 
         #[unsafe(method(notification:))]
         fn notification(&self, scn: *const c_void) {
-            let code = unsafe { (*(scn as *const NotifyHeader)).code };
-            if code == sci::SCN_SAVEPOINTREACHED || code == sci::SCN_SAVEPOINTLEFT {
+            let h = unsafe { &*(scn as *const NotifyHeader) };
+            if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 let n = self.ivars().tabs.borrow().len();
                 (0..n).for_each(|i| self.refresh_title(i));
             }
+            if h.code == sci::SCN_DOUBLECLICK && h.id_from == sci::RESULTS_ID {
+                let v = &self.ivars().results.get().unwrap().0;
+                let pos = if h.position < 0 { sci::selection(v).1 } else { h.position };
+                let line = sci::send(v, sci::SCI_LINEFROMPOSITION, pos as usize, 0);
+                let start = sci::send(v, sci::SCI_POSITIONFROMLINE, line as usize, 0);
+                self.ivars().pending_hit.set((line, pos - start));
+                let _: () = unsafe {
+                    msg_send![self, performSelector: sel!(openResult:), withObject: None::<&AnyObject>, afterDelay: 0.0f64]
+                };
+            }
+        }
+
+        #[unsafe(method(openResult:))]
+        fn open_result(&self, _s: Option<&AnyObject>) {
+            let (line, at) = self.ivars().pending_hit.get();
+            let hit = self.ivars().result_lines.borrow().get(line as usize).and_then(|l| Some((l.hit.clone()?, l.marks.clone())));
+            let Some(((path, ranges), marks)) = hit else { return };
+            let k = marks.iter().position(|&(s, e)| s <= at && at <= e).unwrap_or(0);
+            self.open_path(&path);
+            let tab = self.current().and_then(|i| self.tab(i));
+            if let Some(t) = tab.filter(|t| t.path.as_deref() == Some(&path)) {
+                sci::select(&t.view, ranges[k]);
+                self.ivars().window.get().unwrap().makeKeyAndOrderFront(None);
+                self.focus();
+            }
+        }
+
+        #[unsafe(method(showFind:))]
+        fn show_find(&self, _s: Option<&AnyObject>) {
+            self.open_find(false);
+        }
+
+        #[unsafe(method(showReplace:))]
+        fn show_replace(&self, _s: Option<&AnyObject>) {
+            self.open_find(true);
+        }
+
+        #[unsafe(method(findNext:))]
+        fn find_next(&self, _s: Option<&AnyObject>) {
+            self.find(false);
+        }
+
+        #[unsafe(method(findPrevious:))]
+        fn find_previous(&self, _s: Option<&AnyObject>) {
+            self.find(true);
+        }
+
+        #[unsafe(method(count:))]
+        fn count(&self, _s: Option<&AnyObject>) {
+            let (c, o) = (&self.find_ui().c, self.find_ui().c.opts());
+            let Some(v) = self.editor() else { return };
+            let doc = sci::doc(&v);
+            let start = if o.wrap { 0 } else { sci::selection(&v).0 };
+            c.set_status(&match search::process(&doc, &o, false, false, (start, doc.len())) {
+                Ok(m) => search::count_status(m.len(), &o),
+                Err(e) => e,
+            });
+        }
+
+        #[unsafe(method(replaceAll:))]
+        fn replace_all(&self, _s: Option<&AnyObject>) {
+            let (c, o) = (&self.find_ui().c, self.find_ui().c.opts());
+            let Some(v) = self.editor() else { return };
+            let doc = sci::doc(&v);
+            let start = if o.wrap { 0 } else { sci::selection(&v).0 };
+            c.set_status(&match search::replace_all(&doc, &o, (start, doc.len())) {
+                Ok(n) => search::replace_all_status(n, &o),
+                Err(e) => e,
+            });
+        }
+
+        #[unsafe(method(replace:))]
+        fn replace(&self, _s: Option<&AnyObject>) {
+            let (c, o) = (&self.find_ui().c, self.find_ui().c.opts());
+            let Some(v) = self.editor() else { return };
+            if o.find.is_empty() {
+                return;
+            }
+            c.set_status(&self.replace_once(&v, &o).unwrap_or_else(|e| e));
+        }
+
+        #[unsafe(method(closePanel:))]
+        fn close_panel(&self, s: Option<&AnyObject>) {
+            if let Some(s) = s {
+                let w: Option<Retained<NSWindow>> = unsafe { msg_send![s, window] };
+                if let Some(w) = w {
+                    w.orderOut(None);
+                }
+            }
+        }
+
+        #[unsafe(method(searchModeChanged:))]
+        fn search_mode_changed(&self, _s: Option<&AnyObject>) {
+            if let Some(u) = self.ivars().find_ui.get() {
+                u.c.mode_changed();
+                u.prev.setEnabled(!panel::on(&u.c.modes[2]));
+            }
+            if let Some(u) = self.ivars().fif_ui.get() {
+                u.c.mode_changed();
+            }
+        }
+
+        #[unsafe(method(showFindInFiles:))]
+        fn show_find_in_files(&self, _s: Option<&AnyObject>) {
+            let u = self.fif_ui();
+            if panel::text(&u.dir).is_empty() {
+                let dir = self.current().and_then(|i| self.tab(i)?.path?.parent().map(Path::to_path_buf));
+                if let Some(d) = dir {
+                    u.dir.setStringValue(&ns(&d.to_string_lossy()));
+                }
+            }
+            self.show_panel(&u.form, &u.c.find, &u.c.find);
+        }
+
+        #[unsafe(method(browseDir:))]
+        fn browse_dir(&self, _s: Option<&AnyObject>) {
+            let p = NSOpenPanel::openPanel(self.mtm());
+            p.setCanChooseDirectories(true);
+            p.setCanChooseFiles(false);
+            if p.runModal() == NSModalResponseOK {
+                if let Some(path) = p.URL().and_then(|u| u.path()) {
+                    self.fif_ui().dir.setStringValue(&path);
+                }
+            }
+        }
+
+        #[unsafe(method(findAll:))]
+        fn find_all(&self, _s: Option<&AnyObject>) {
+            self.start_fif(false);
+        }
+
+        #[unsafe(method(replaceInFiles:))]
+        fn replace_in_files(&self, _s: Option<&AnyObject>) {
+            self.start_fif(true);
+        }
+
+        #[unsafe(method(fifDone:))]
+        fn fif_done(&self, _s: Option<&AnyObject>) {
+            let Some((replace, r)) = FIF_DONE.lock().unwrap().take() else { return };
+            self.ivars().fif_running.set(false);
+            if replace {
+                self.ivars().replacing.set(false);
+                self.set_tabs_read_only(false);
+            }
+            let c = &self.fif_ui().c;
+            match r {
+                Err(e) => c.set_status(&e),
+                Ok(out) if replace => {
+                    let not_reloaded = self.reload_changed(&out.changed);
+                    c.set_status(&search::replace_in_files_status(&out, &not_reloaded));
+                }
+                Ok(out) => {
+                    c.set_status("");
+                    self.show_results(out.lines);
+                }
+            }
+        }
+
+        #[unsafe(method(goToLine:))]
+        fn go_to_line(&self, _s: Option<&AnyObject>) {
+            let Some(v) = self.editor() else { return };
+            let (cur, max) = sci::line_info(&v);
+            let a = NSAlert::new(self.mtm());
+            a.setMessageText(&ns("Go To..."));
+            a.setInformativeText(&ns(&format!("You are here: {cur}\nYou can't go further than: {max}")));
+            let f = NSTextField::textFieldWithString(&NSString::new(), self.mtm());
+            f.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(200., 24.)));
+            f.setPlaceholderString(Some(&ns("You want to go to")));
+            a.setAccessoryView(Some(&f));
+            a.addButtonWithTitle(&ns("Go"));
+            a.addButtonWithTitle(&ns("Cancel"));
+            a.window().setInitialFirstResponder(Some(&f));
+            if a.runModal() == NSAlertFirstButtonReturn {
+                if let Ok(n) = panel::text(&f).trim().parse::<isize>() {
+                    sci::goto_line(&v, n.min(max));
+                }
+            }
+            self.focus();
         }
     }
 
@@ -136,6 +374,10 @@ define_class!(
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _a: &NSApplication) -> NSApplicationTerminateReply {
+            if self.ivars().replacing.get() {
+                self.alert("Replace in Files is still running.", "Quit again when it is done.", &["OK"]);
+                return NSApplicationTerminateReply::TerminateCancel;
+            }
             let n = self.ivars().tabs.borrow().len();
             for i in 0..n {
                 self.tab_view().selectTabViewItemAtIndex(i as isize);
@@ -194,11 +436,274 @@ impl App {
         w.setDelegate(Some(ProtocolObject::from_ref(self)));
         let tv = NSTabView::new(mtm);
         tv.setDelegate(Some(ProtocolObject::from_ref(self)));
-        w.setContentView(Some(&tv));
+        let results = sci::new_view();
+        sci::set_delegate(&results, self);
+        let markings = sci::setup_results(&results, cfg());
+        let split = NSSplitView::new(mtm);
+        split.setVertical(false);
+        split.setDividerStyle(NSSplitViewDividerStyle::Thin);
+        split.addSubview(&tv);
+        split.addSubview(&results);
+        w.setContentView(Some(&split));
+        split.setPosition_ofDividerAtIndex(split.frame().size.height, 0);
         w.center();
         w.makeKeyAndOrderFront(None);
         let _ = self.ivars().window.set(w);
         let _ = self.ivars().tab_view.set(tv);
+        let _ = self.ivars().split.set(split);
+        let _ = self.ivars().results.set((results, markings));
+    }
+
+    fn editor(&self) -> Option<Retained<NSView>> {
+        self.current().and_then(|i| self.tab(i)).map(|t| t.view)
+    }
+
+    fn selected_line(&self) -> Option<String> {
+        let v = self.editor()?;
+        let (s, e) = sci::selection(&v);
+        let b = sci::doc(&v).range(s, e);
+        (s < e && b.len() <= 1024 && !b.contains(&b'\n') && !b.contains(&b'\r'))
+            .then(|| String::from_utf8_lossy(&b).into_owned())
+    }
+
+    fn show_panel(&self, form: &Form, find: &NSTextField, focus: &NSTextField) {
+        if let Some(s) = self.selected_line() {
+            find.setStringValue(&ns(&s));
+        }
+        form.panel.makeKeyAndOrderFront(None);
+        form.panel.makeFirstResponder(Some(focus));
+        unsafe { focus.selectText(None) };
+    }
+
+    fn find_ui(&self) -> &FindUi {
+        self.ivars().find_ui.get_or_init(|| {
+            let t: &AnyObject = self;
+            let f = Form::new(self.mtm(), "Find", 560., 310.);
+            let (c, _) = panel::controls(&f, t, 0., &[]);
+            let (x, w) = (436., 110.);
+            let next = f.button("Find Next", x, 14., w, t, sel!(findNext:));
+            next.setKeyEquivalent(&ns("\r"));
+            let prev = f.button("Find Previous", x, 46., w, t, sel!(findPrevious:));
+            f.button("Count", x, 78., w, t, sel!(count:));
+            f.button("Replace", x, 110., w, t, sel!(replace:));
+            f.button("Replace All", x, 142., w, t, sel!(replaceAll:));
+            f.button("Close", x, 174., w, t, sel!(closePanel:))
+                .setKeyEquivalent(&ns("\u{1b}"));
+            FindUi { form: f, c, prev }
+        })
+    }
+
+    fn fif_ui(&self) -> &FifUi {
+        self.ivars().fif_ui.get_or_init(|| {
+            let t: &AnyObject = self;
+            let f = Form::new(self.mtm(), "Find in Files", 600., 390.);
+            let (c, b) = panel::controls(&f, t, 60., &["In all sub-folders", "In hidden folders"]);
+            f.label("Filters:", 16., 76., 100.);
+            let filters = f.field(120., 76., 300.);
+            filters.setStringValue(&ns("*.*"));
+            f.label("Directory:", 16., 106., 100.);
+            let dir = f.field(120., 106., 300.);
+            f.button("...", 424., 103., 44., t, sel!(browseDir:));
+            panel::set_on(&b[0], true);
+            let (x, w) = (476., 110.);
+            f.button("Find All", x, 14., w, t, sel!(findAll:))
+                .setKeyEquivalent(&ns("\r"));
+            f.button("Replace in Files", x, 46., w, t, sel!(replaceInFiles:));
+            f.button("Close", x, 78., w, t, sel!(closePanel:))
+                .setKeyEquivalent(&ns("\u{1b}"));
+            let [sub, hidden] = [b[0].clone(), b[1].clone()];
+            FifUi {
+                form: f,
+                c,
+                filters,
+                dir,
+                sub,
+                hidden,
+            }
+        })
+    }
+
+    fn open_find(&self, replace: bool) {
+        let u = self.find_ui();
+        self.show_panel(
+            &u.form,
+            &u.c.find,
+            if replace { &u.c.replace } else { &u.c.find },
+        );
+    }
+
+    fn find(&self, up: bool) {
+        let c = &self.find_ui().c;
+        let o = c.opts();
+        let Some(v) = self.editor() else { return };
+        if up && o.regex() {
+            return;
+        }
+        let doc = sci::doc(&v);
+        c.set_status(
+            &match search::find_next(&doc, &o, sci::selection(&v), up, Next::Find) {
+                Ok(Some((m, w))) => {
+                    sci::select(&v, m);
+                    match w {
+                        Wrap::End => search::END_REACHED,
+                        Wrap::Top => search::TOP_REACHED,
+                        Wrap::No => "",
+                    }
+                    .to_string()
+                }
+                Ok(None) if o.find.is_empty() => String::new(),
+                Ok(None) => search::not_found_status(&o),
+                Err(e) => e,
+            },
+        );
+    }
+
+    // Port of FindReplaceDlg::processReplace.
+    fn replace_once(&self, v: &NSView, o: &search::Opts) -> Result<String, String> {
+        let doc = sci::doc(v);
+        if doc.read_only() {
+            return Err(search::REPLACE_READ_ONLY.into());
+        }
+        let cur = sci::selection(v);
+        let Some((m, _)) = search::find_next(&doc, o, cur, false, Next::ForReplace)? else {
+            return Ok(search::replace_not_found_status(o));
+        };
+        if m != cur {
+            sci::select(v, m);
+            return Ok(String::new());
+        }
+        let n = doc.replace(m.0, m.1 - m.0, &o.replace_bytes(), o.regex());
+        if n < 0 {
+            return Err("Replace: Cannot replace text.".into());
+        }
+        let p = m.0 + n;
+        sci::select(v, (p, p));
+        Ok(
+            match search::find_next(&doc, o, (p, p), false, Next::AfterReplace)? {
+                Some((n, w)) => {
+                    sci::select(v, n);
+                    match w {
+                        Wrap::End => search::REPLACE_END_REACHED,
+                        Wrap::Top => search::REPLACE_TOP_REACHED,
+                        Wrap::No => {
+                            "Replace: 1 occurrence was replaced. The next occurrence found."
+                        }
+                    }
+                }
+                None => "Replace: 1 occurrence was replaced. No more occurrences were found.",
+            }
+            .to_string(),
+        )
+    }
+
+    fn start_fif(&self, replace: bool) {
+        let u = self.fif_ui();
+        let opts = u.c.opts();
+        let dir = panel::text(&u.dir).trim().to_string();
+        let filters = panel::text(&u.filters);
+        if self.ivars().fif_running.get() || opts.find.is_empty() || dir.is_empty() {
+            return;
+        }
+        if replace {
+            let f = if filters.trim().is_empty() {
+                "*.*"
+            } else {
+                filters.as_str()
+            };
+            let msg = format!("Are you sure you want to replace all occurrences in:\n\n{dir}\n\nFor file type:\n\n{f}");
+            let a = NSAlert::new(self.mtm());
+            a.setMessageText(&ns("Are you sure?"));
+            a.setInformativeText(&ns(&msg));
+            a.addButtonWithTitle(&ns("OK")).setKeyEquivalent(&ns(""));
+            a.addButtonWithTitle(&ns("Cancel"))
+                .setKeyEquivalent(&ns("\r"));
+            a.setAccessoryView(Some(&EscapeCancels::new(self.mtm())));
+            if a.runModal() != NSAlertFirstButtonReturn {
+                return;
+            }
+        }
+        let args = FifArgs {
+            dir: PathBuf::from(dir),
+            filters,
+            sub: panel::on(&u.sub),
+            hidden: panel::on(&u.hidden),
+            opts,
+            replace,
+            skip: self.unsaved_paths(),
+        };
+        u.c.set_status(if replace {
+            "Replace In Files progress..."
+        } else {
+            "Find In Files progress..."
+        });
+        self.ivars().fif_running.set(true);
+        if replace {
+            self.ivars().replacing.set(true);
+            self.set_tabs_read_only(true);
+        }
+        let app = self as *const Self as usize;
+        std::thread::spawn(move || {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                search::find_in_files(&args)
+            }))
+            .unwrap_or_else(|_| Err("Find in Files stopped because of an internal error.".into()));
+            *FIF_DONE.lock().unwrap() = Some((args.replace, r));
+            let app = unsafe { &*(app as *const AnyObject) };
+            let _: () = unsafe {
+                msg_send![app, performSelectorOnMainThread: sel!(fifDone:), withObject: None::<&AnyObject>, waitUntilDone: false]
+            };
+        });
+    }
+
+    fn unsaved_paths(&self) -> Vec<PathBuf> {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        tabs.iter()
+            .filter(|t| sci::is_modified(&t.view))
+            .filter_map(|t| t.path.as_deref().map(search::canonical))
+            .collect()
+    }
+
+    fn set_tabs_read_only(&self, on: bool) {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        tabs.iter().for_each(|t| sci::set_read_only(&t.view, on));
+    }
+
+    // Reloads open tabs of changed files and returns the paths of modified tabs it did not reload.
+    fn reload_changed(&self, changed: &[PathBuf]) -> Vec<PathBuf> {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        let mut kept = vec![];
+        for t in tabs {
+            let Some(p) = &t.path else { continue };
+            if !changed.contains(&search::canonical(p)) {
+                continue;
+            }
+            if sci::is_modified(&t.view) {
+                kept.push(p.clone());
+            } else if let Ok(b) = std::fs::read(p) {
+                sci::reload(&t.view, &b);
+            }
+        }
+        kept
+    }
+
+    fn show_results(&self, lines: Vec<Line>) {
+        let (v, m) = self.ivars().results.get().unwrap();
+        let mut text = vec![];
+        for l in &lines {
+            text.extend_from_slice(&l.text);
+            text.extend_from_slice(b"\r\n");
+        }
+        let mut all: Vec<Line> = lines
+            .into_iter()
+            .map(|l| Line { text: vec![], ..l })
+            .collect();
+        all.extend(self.ivars().result_lines.take());
+        sci::prepend_results(v, *m, &all, &text);
+        *self.ivars().result_lines.borrow_mut() = all;
+        let split = self.ivars().split.get().unwrap();
+        if v.frame().size.height < 40. {
+            split.setPosition_ofDividerAtIndex(split.frame().size.height - 220., 0);
+        }
     }
 
     fn tab(&self, i: usize) -> Option<Tab> {
@@ -245,6 +750,7 @@ impl App {
         let view = sci::new_view();
         sci::set_delegate(&view, self);
         sci::set_bytes(&view, bytes);
+        sci::set_read_only(&view, self.ivars().replacing.get());
         let lang = path
             .as_deref()
             .and_then(|p| lang::language_for_path(cfg(), p));
@@ -282,6 +788,14 @@ impl App {
     }
 
     fn save(&self, i: usize, ask: bool) -> bool {
+        if self.ivars().replacing.get() {
+            self.alert(
+                "Replace in Files is still running.",
+                "Save again when it is done.",
+                &["OK"],
+            );
+            return false;
+        }
         let Some(tab) = self.tab(i) else { return false };
         let path = match tab.path.clone().filter(|_| !ask) {
             Some(p) => p,
@@ -379,6 +893,7 @@ fn submenu(mtm: MainThreadMarker, bar: &NSMenu, title: &str, items: Vec<Retained
 
 fn main() {
     let mtm = MainThreadMarker::new().unwrap();
+    search::warm_up();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let d = App::new(mtm);
@@ -415,6 +930,23 @@ fn main() {
             item(mtm, "Copy", sel!(copy:), "c", None),
             item(mtm, "Paste", sel!(paste:), "v", None),
             item(mtm, "Select All", sel!(selectAll:), "a", None),
+        ],
+    );
+    let replace = item(mtm, "Replace...", sel!(showReplace:), "f", t);
+    replace
+        .setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Option);
+    submenu(
+        mtm,
+        &bar,
+        "Search",
+        vec![
+            item(mtm, "Find...", sel!(showFind:), "f", t),
+            item(mtm, "Find in Files...", sel!(showFindInFiles:), "F", t),
+            item(mtm, "Find Next", sel!(findNext:), "g", t),
+            item(mtm, "Find Previous", sel!(findPrevious:), "G", t),
+            replace,
+            NSMenuItem::separatorItem(mtm),
+            item(mtm, "Go to...", sel!(goToLine:), "l", t),
         ],
     );
     app.setMainMenu(Some(&bar));
