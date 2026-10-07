@@ -742,6 +742,8 @@ pub struct FifArgs {
     pub opts: Opts,
     pub replace: bool,
     pub skip: Vec<PathBuf>,
+    // Encodings of open tabs by canonical path; other files use detection.
+    pub encs: Vec<(PathBuf, Enc)>,
 }
 
 pub fn canonical(p: &Path) -> PathBuf {
@@ -765,10 +767,16 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
             continue;
         }
         let Ok(b) = std::fs::read(f) else { continue };
-        let (enc, text, lost) = encoding::load(&b);
-        if is_binary(&b) && !matches!(enc, Enc::Utf16Be | Enc::Utf16Le) {
+        if is_binary(&b) && !b.starts_with(b"\xFF\xFE") && !b.starts_with(b"\xFE\xFF") {
             continue;
         }
+        let (enc, text, lost) = match a.encs.iter().find(|(p, _)| *p == c) {
+            Some(&(_, e)) => {
+                let (text, lost) = encoding::decode(&b, e);
+                (e, text, lost)
+            }
+            None => encoding::load(&b),
+        };
         let Some(doc) = Doc::new(&text) else { continue };
         if a.replace {
             if lost {
@@ -982,6 +990,7 @@ mod tests {
             opts: opts("foo"),
             replace: false,
             skip: vec![],
+            encs: vec![],
         };
         let out = find_in_files(&a).unwrap();
         let text: Vec<String> = out
@@ -1035,6 +1044,7 @@ mod tests {
             },
             replace: true,
             skip: vec![],
+            encs: vec![],
         };
         let out = find_in_files(&a).unwrap();
         std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -1072,6 +1082,7 @@ mod tests {
             },
             replace: true,
             skip: vec![canonical(&d.join("sub/c.txt"))],
+            encs: vec![],
         };
         let out = find_in_files(&a).unwrap();
         assert_eq!(out.skipped, [d.join("sub/c.txt")]);
@@ -1112,6 +1123,7 @@ mod tests {
             },
             replace: true,
             skip: vec![],
+            encs: vec![],
         };
         let out = find_in_files(&a).unwrap();
         assert_eq!(
@@ -1130,6 +1142,26 @@ mod tests {
         assert_eq!(out.unreadable, [d.join("odd.txt")]);
         assert!(replace_in_files_status(&out, &[])
             .ends_with("\nSkipped (cannot read without loss in its encoding): odd.txt"));
+        std::fs::write(d.join("ansi.txt"), b"caf\xE9 foo\r\n").unwrap();
+        let tab = FifArgs {
+            filters: "ansi.txt".into(),
+            opts: Opts {
+                replace: "\u{439}".into(),
+                ..opts("foo")
+            },
+            encs: vec![(canonical(&d.join("ansi.txt")), Enc::Cp(1251))],
+            ..a
+        };
+        assert_eq!(find_in_files(&tab).unwrap().count, 1);
+        assert_eq!(
+            std::fs::read(d.join("ansi.txt")).unwrap(),
+            b"caf\xE9 \xE9\r\n"
+        );
+        let a = FifArgs {
+            filters: "*.txt".into(),
+            encs: vec![],
+            ..tab
+        };
         let find = FifArgs {
             replace: false,
             opts: opts("\u{e9}"),

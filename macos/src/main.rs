@@ -350,6 +350,13 @@ define_class!(
             let Some(t) = self.tab(i) else { return };
             let e = tag_enc(s.tag());
             if !matches!((t.enc, e), (Enc::Cp(_), _) | (_, Enc::Cp(_))) {
+                if t.enc != e && (t.enc == Enc::Ansi || e == Enc::Ansi) {
+                    let (text, lost) = encoding::reinterpret(&sci::bytes(&t.view), t.enc, e);
+                    sci::replace_text(&t.view, &text);
+                    if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
+                        t.lost |= lost;
+                    }
+                }
                 if t.enc != e {
                     self.set_enc(i, e, t.enc_dirty || should_be_dirty(t.enc, e));
                 }
@@ -734,6 +741,7 @@ impl App {
             opts,
             replace,
             skip: self.unsaved_paths(),
+            encs: self.tab_encodings(),
         };
         u.c.set_status(if replace {
             "Replace In Files progress..."
@@ -764,6 +772,13 @@ impl App {
         tabs.iter()
             .filter(|t| self.dirty(t))
             .filter_map(|t| t.path.as_deref().map(search::canonical))
+            .collect()
+    }
+
+    fn tab_encodings(&self) -> Vec<(PathBuf, Enc)> {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        tabs.iter()
+            .filter_map(|t| Some((search::canonical(t.path.as_deref()?), t.enc)))
             .collect()
     }
 

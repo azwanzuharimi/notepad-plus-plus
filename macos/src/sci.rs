@@ -156,6 +156,16 @@ pub fn set_read_only(v: &NSView, on: bool) {
     send(v, SCI_SETREADONLY, on as usize, 0);
 }
 
+// Replaces all text as one undo step and keeps the modified state.
+pub fn replace_text(v: &NSView, b: &[u8]) {
+    let clean = !is_modified(v);
+    send(v, SCI_SETTARGETRANGE, 0, length(v));
+    send(v, SCI_REPLACETARGET, b.len(), b.as_ptr() as isize);
+    if clean {
+        set_save_point(v);
+    }
+}
+
 pub fn reload(v: &NSView, b: &[u8]) {
     send(v, SCI_CLEARALL, 0, 0);
     set_bytes(v, b);

@@ -476,6 +476,22 @@ pub fn load(b: &[u8]) -> (Enc, Vec<u8>, bool) {
     (e, text, lost)
 }
 
+// "Encode in" between ANSI and a Unicode mode: Notepad++ changes only the Scintilla code page,
+// so the same bytes are read again. True when the save can lose some of them.
+pub fn reinterpret(text: &[u8], from: Enc, to: Enc) -> (Vec<u8>, bool) {
+    let (raw, mut lost) = match encode(text, Enc::Ansi, false) {
+        _ if from != Enc::Ansi => (text.to_vec(), false),
+        Ok(b) => (b, false),
+        Err(_) => (encode(text, Enc::Ansi, true).unwrap_or_default(), true),
+    };
+    if to == Enc::Ansi {
+        return decode(&raw, Enc::Ansi);
+    }
+    // Invalid UTF-8 stays as raw bytes, which Scintilla shows as hex blobs; only UTF-16 cannot save them.
+    lost |= matches!(to, Enc::Utf16Be | Enc::Utf16Le) && std::str::from_utf8(&raw).is_err();
+    (raw, lost)
+}
+
 fn encode_cp(s: &str, cp: u32, out: &mut Vec<u8>) -> usize {
     if let Some(t) = byte_table(cp) {
         let mut bad = 0;
@@ -703,5 +719,31 @@ mod tests {
         assert!(!decode(b"\xFF\xFEa\0", Enc::Utf16Le).1);
         assert!(decode(b"\x82\xA0\xFF\xFF", Enc::Cp(932)).1);
         assert!(!decode(b"a\xFFb", Enc::Utf8).1);
+    }
+
+    #[test]
+    fn ansi_reinterprets_bytes() {
+        let (e, text, _) = load(b"caf\xC3\xA9 \xFF");
+        assert_eq!(e, Enc::Ansi);
+        assert_eq!(text, "caf\u{c3}\u{a9} \u{ff}".as_bytes());
+        let (utf8, lost) = reinterpret(&text, Enc::Ansi, Enc::Utf8);
+        assert_eq!(
+            (utf8.as_slice(), lost),
+            (b"caf\xC3\xA9 \xFF".as_slice(), false)
+        );
+        assert!(reinterpret(&text, Enc::Ansi, Enc::Utf16Le).1);
+        assert_eq!(
+            reinterpret(&utf8, Enc::Utf8, Enc::Ansi),
+            (text.clone(), false)
+        );
+        assert_eq!(
+            reinterpret("\u{e9}".as_bytes(), Enc::Utf8Bom, Enc::Ansi).0,
+            "\u{c3}\u{a9}".as_bytes()
+        );
+        assert_eq!(
+            reinterpret("\u{e9}".as_bytes(), Enc::Ansi, Enc::Utf8).0,
+            b"\xE9"
+        );
+        assert!(reinterpret("\u{416}".as_bytes(), Enc::Ansi, Enc::Utf8).1);
     }
 }
