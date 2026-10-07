@@ -567,7 +567,13 @@ impl App {
                 filters.as_str()
             };
             let msg = format!("Are you sure you want to replace all occurrences in:\n\n{dir}\n\nFor file type:\n\n{f}");
-            if self.alert("Are you sure?", &msg, &["OK", "Cancel"]) != NSAlertFirstButtonReturn {
+            let a = NSAlert::new(self.mtm());
+            a.setMessageText(&ns("Are you sure?"));
+            a.setInformativeText(&ns(&msg));
+            a.addButtonWithTitle(&ns("OK")).setKeyEquivalent(&ns(""));
+            a.addButtonWithTitle(&ns("Cancel"))
+                .setKeyEquivalent(&ns("\r"));
+            if a.runModal() != NSAlertFirstButtonReturn {
                 return;
             }
         }
