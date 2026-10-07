@@ -125,9 +125,9 @@ impl Doc {
         let pos = unsafe { npp_doc_find(self.p, min, max, z.as_ptr(), &mut len, flags as c_int) };
         match pos {
             -1 => Ok(None),
-            p if p < -1 => Err(unsafe { CStr::from_ptr(npp_regex_error()) }
-                .to_string_lossy()
-                .into_owned()),
+            p if p < -1 => Err(regex_error_status(
+                &unsafe { CStr::from_ptr(npp_regex_error()) }.to_string_lossy(),
+            )),
             p => Ok(Some((p, p + len))),
         }
     }
@@ -370,7 +370,7 @@ pub fn process(
         let delta = if replace {
             let r = doc.replace(s, n, &with, o.regex());
             if r < 0 {
-                return Err("Replace failed".into());
+                return Err("Replace: Cannot replace text.".into());
             }
             r - n
         } else {
@@ -456,7 +456,7 @@ pub fn not_found_status(o: &Opts) -> String {
     with_reason(format!("Find: Can't find the text \"{t}\""), 0, o)
 }
 
-pub fn regex_error_status(e: &str) -> String {
+fn regex_error_status(e: &str) -> String {
     format!("Find: Invalid Regular Expression\n{e}")
 }
 
@@ -466,25 +466,38 @@ pub const TOP_REACHED: &str =
 pub const REPLACE_END_REACHED: &str = "Replace: Reached document end, started from top.";
 pub const REPLACE_TOP_REACHED: &str = "Replace: Reached document beginning, started from bottom.";
 
-pub fn replace_in_files_status(n: usize, skipped: &[PathBuf]) -> String {
-    let mut m = if n == 1 {
+fn file_name(p: &Path) -> String {
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub fn replace_in_files_status(o: &FifOut, not_reloaded: &[PathBuf]) -> String {
+    let mut m = if o.count == 1 {
         "Replace in Files: 1 occurrence was replaced.".to_string()
     } else {
-        format!("Replace in Files: {n} occurrences were replaced.")
+        format!("Replace in Files: {} occurrences were replaced.", o.count)
     };
-    if !skipped.is_empty() {
-        let names: Vec<String> = skipped
-            .iter()
-            .map(|p| {
-                p.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect();
+    let list = |v: &[PathBuf]| {
+        v.iter()
+            .map(|p| file_name(p))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !o.skipped.is_empty() {
         m += &format!(
             "\nSkipped (unsaved changes in an open tab): {}",
-            names.join(", ")
+            list(&o.skipped)
+        );
+    }
+    for (p, e) in &o.errors {
+        m += &format!("\nCannot write {}: {e}", file_name(p));
+    }
+    if !not_reloaded.is_empty() {
+        m += &format!(
+            "\nChanged on disk, tab not reloaded: {}",
+            list(not_reloaded)
         );
     }
     m
@@ -696,6 +709,7 @@ pub struct FifOut {
     pub count: usize,
     pub changed: Vec<PathBuf>,
     pub skipped: Vec<PathBuf>,
+    pub errors: Vec<(PathBuf, String)>,
 }
 
 pub struct FifArgs {
@@ -714,14 +728,14 @@ pub fn canonical(p: &Path) -> PathBuf {
 
 // Find in Files and Replace in Files; replace writes only files that change.
 pub fn find_in_files(a: &FifArgs) -> Result<FifOut, String> {
-    find_in_files_raw(a).map_err(|e| regex_error_status(&e))
+    find_in_files_raw(a)
 }
 
 fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
     let files = walk(&a.dir, &patterns(&a.filters), a.sub, a.hidden);
     let mut body = vec![];
     let (mut count, mut nfiles) = (0, 0);
-    let (mut changed, mut skipped) = (vec![], vec![]);
+    let (mut changed, mut skipped, mut errors) = (vec![], vec![], vec![]);
     for f in &files {
         let c = canonical(f);
         if a.replace && a.skip.contains(&c) {
@@ -736,12 +750,14 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
         if a.replace {
             let n = process(&doc, &a.opts, true, true, (0, doc.len()))?.len();
             if n > 0 {
-                if let Err(e) = std::fs::write(f, doc.text()) {
-                    return Err(format!("{}: {e}", f.display()));
+                match std::fs::write(f, doc.text()) {
+                    Ok(()) => {
+                        changed.push(c);
+                        count += n;
+                    }
+                    Err(e) => errors.push((f.clone(), e.to_string())),
                 }
-                changed.push(c);
             }
-            count += n;
         } else {
             let lines = find_all_lines(&doc, &a.opts, f)?;
             if !lines.is_empty() {
@@ -768,6 +784,7 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
         count,
         changed,
         skipped,
+        errors,
     })
 }
 
@@ -971,6 +988,46 @@ mod tests {
     }
 
     #[test]
+    fn replace_in_files_continues_after_write_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmp("readonly");
+        let ro = d.join("sub/c.txt");
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let a = FifArgs {
+            dir: d.clone(),
+            filters: "a.txt c.txt".into(),
+            sub: true,
+            hidden: false,
+            opts: Opts {
+                replace: "X".into(),
+                ..opts("foo")
+            },
+            replace: true,
+            skip: vec![],
+        };
+        let out = find_in_files(&a).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(out.changed, [canonical(&d.join("a.txt"))]);
+        assert_eq!(out.count, 3);
+        assert_eq!(out.errors.len(), 1);
+        assert_eq!(out.errors[0].0, ro);
+        assert_eq!(
+            std::fs::read_to_string(&ro).unwrap(),
+            "foo bar\nbaz foo foo\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("a.txt")).unwrap(),
+            "X bar\nbaz X X\n"
+        );
+        let msg = replace_in_files_status(&out, &[d.join("a.txt")]);
+        assert!(msg.contains("\nCannot write c.txt: "), "{msg}");
+        assert!(
+            msg.ends_with("\nChanged on disk, tab not reloaded: a.txt"),
+            "{msg}"
+        );
+    }
+
+    #[test]
     fn replace_in_files_skips_listed_files() {
         let d = tmp("skip");
         let a = FifArgs {
@@ -997,7 +1054,7 @@ mod tests {
         );
         assert!(out.changed.contains(&canonical(&d.join("a.txt"))));
         assert!(!out.changed.contains(&canonical(&d.join("sub/c.txt"))));
-        assert!(replace_in_files_status(out.count, &out.skipped)
+        assert!(replace_in_files_status(&out, &[])
             .ends_with("\nSkipped (unsaved changes in an open tab): c.txt"));
     }
 

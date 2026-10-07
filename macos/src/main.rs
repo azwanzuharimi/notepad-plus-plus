@@ -71,6 +71,7 @@ struct Ivars {
     result_lines: RefCell<Vec<Line>>,
     pending_hit: Cell<(isize, isize)>,
     fif_running: Cell<bool>,
+    replacing: Cell<bool>,
     find_ui: OnceCell<FindUi>,
     fif_ui: OnceCell<FifUi>,
 }
@@ -227,7 +228,7 @@ define_class!(
             let start = if o.wrap { 0 } else { sci::selection(&v).0 };
             c.set_status(&match search::process(&doc, &o, false, false, (start, doc.len())) {
                 Ok(m) => search::count_status(m.len(), &o),
-                Err(e) => search::regex_error_status(&e),
+                Err(e) => e,
             });
         }
 
@@ -239,7 +240,7 @@ define_class!(
             let start = if o.wrap { 0 } else { sci::selection(&v).0 };
             c.set_status(&match search::replace_all(&doc, &o, (start, doc.len())) {
                 Ok(n) => search::replace_all_status(n, &o),
-                Err(e) => search::regex_error_status(&e),
+                Err(e) => e,
             });
         }
 
@@ -250,7 +251,7 @@ define_class!(
             if o.find.is_empty() {
                 return;
             }
-            c.set_status(&self.replace_once(&v, &o).unwrap_or_else(|e| search::regex_error_status(&e)));
+            c.set_status(&self.replace_once(&v, &o).unwrap_or_else(|e| e));
         }
 
         #[unsafe(method(closePanel:))]
@@ -312,12 +313,16 @@ define_class!(
         fn fif_done(&self, _s: Option<&AnyObject>) {
             let Some((replace, r)) = FIF_DONE.lock().unwrap().take() else { return };
             self.ivars().fif_running.set(false);
+            if replace {
+                self.ivars().replacing.set(false);
+                self.set_tabs_read_only(false);
+            }
             let c = &self.fif_ui().c;
             match r {
                 Err(e) => c.set_status(&e),
                 Ok(out) if replace => {
-                    c.set_status(&search::replace_in_files_status(out.count, &out.skipped));
-                    self.reload_changed(&out.changed);
+                    let not_reloaded = self.reload_changed(&out.changed);
+                    c.set_status(&search::replace_in_files_status(&out, &not_reloaded));
                 }
                 Ok(out) => {
                     c.set_status("");
@@ -369,8 +374,8 @@ define_class!(
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _a: &NSApplication) -> NSApplicationTerminateReply {
-            if self.ivars().fif_running.get() {
-                self.alert("Find in Files is still running.", "Quit again when it is done.", &["OK"]);
+            if self.ivars().replacing.get() {
+                self.alert("Replace in Files is still running.", "Quit again when it is done.", &["OK"]);
                 return NSApplicationTerminateReply::TerminateCancel;
             }
             let n = self.ivars().tabs.borrow().len();
@@ -548,7 +553,7 @@ impl App {
                 }
                 Ok(None) if o.find.is_empty() => String::new(),
                 Ok(None) => search::not_found_status(&o),
-                Err(e) => search::regex_error_status(&e),
+                Err(e) => e,
             },
         );
     }
@@ -564,7 +569,11 @@ impl App {
             sci::select(v, m);
             return Ok(String::new());
         }
-        let p = m.0 + doc.replace(m.0, m.1 - m.0, &o.replace_bytes(), o.regex());
+        let n = doc.replace(m.0, m.1 - m.0, &o.replace_bytes(), o.regex());
+        if n < 0 {
+            return Err("Replace: Cannot replace text.".into());
+        }
+        let p = m.0 + n;
         sci::select(v, (p, p));
         Ok(
             match search::find_next(&doc, o, (p, p), false, Next::AfterReplace)? {
@@ -625,6 +634,10 @@ impl App {
             "Find In Files progress..."
         });
         self.ivars().fif_running.set(true);
+        if replace {
+            self.ivars().replacing.set(true);
+            self.set_tabs_read_only(true);
+        }
         let app = self as *const Self as usize;
         std::thread::spawn(move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -647,17 +660,27 @@ impl App {
             .collect()
     }
 
-    fn reload_changed(&self, changed: &[PathBuf]) {
+    fn set_tabs_read_only(&self, on: bool) {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        tabs.iter().for_each(|t| sci::set_read_only(&t.view, on));
+    }
+
+    // Reloads open tabs of changed files and returns the paths of modified tabs it did not reload.
+    fn reload_changed(&self, changed: &[PathBuf]) -> Vec<PathBuf> {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        let mut kept = vec![];
         for t in tabs {
             let Some(p) = &t.path else { continue };
-            if sci::is_modified(&t.view) || !changed.contains(&search::canonical(p)) {
+            if !changed.contains(&search::canonical(p)) {
                 continue;
             }
-            if let Ok(b) = std::fs::read(p) {
+            if sci::is_modified(&t.view) {
+                kept.push(p.clone());
+            } else if let Ok(b) = std::fs::read(p) {
                 sci::reload(&t.view, &b);
             }
         }
+        kept
     }
 
     fn show_results(&self, lines: Vec<Line>) {
@@ -761,6 +784,14 @@ impl App {
     }
 
     fn save(&self, i: usize, ask: bool) -> bool {
+        if self.ivars().replacing.get() {
+            self.alert(
+                "Replace in Files is still running.",
+                "Save again when it is done.",
+                &["OK"],
+            );
+            return false;
+        }
         let Some(tab) = self.tab(i) else { return false };
         let path = match tab.path.clone().filter(|_| !ask) {
             Some(p) => p,

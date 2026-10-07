@@ -105,6 +105,10 @@ pub fn set_bytes(v: &NSView, b: &[u8]) {
     send(v, SCI_SETSAVEPOINT, 0, 0);
 }
 
+pub fn set_read_only(v: &NSView, on: bool) {
+    send(v, SCI_SETREADONLY, on as usize, 0);
+}
+
 pub fn reload(v: &NSView, b: &[u8]) {
     send(v, SCI_CLEARALL, 0, 0);
     set_bytes(v, b);
