@@ -50,6 +50,9 @@ fn main() {
         )
         .file("src/lexuser_stub.cxx")
         .compile("lexilla");
+    base()
+        .files(files("../PowerEditor/src/uchardet", ".cpp"))
+        .compile("uchardet");
     for f in ["Cocoa", "QuartzCore"] {
         println!("cargo:rustc-link-lib=framework={f}");
     }
@@ -61,6 +64,7 @@ fn main() {
         "src/lexuser_stub.cxx",
         "../boostregex",
         "src/docsearch.cxx",
+        "../PowerEditor/src/uchardet",
     ] {
         println!("cargo:rerun-if-changed={d}");
     }
