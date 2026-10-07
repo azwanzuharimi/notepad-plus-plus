@@ -66,6 +66,7 @@ struct Tab {
     name: String,
     enc: Enc,
     enc_dirty: bool,
+    lost: bool,
 }
 
 #[derive(Default)]
@@ -126,7 +127,7 @@ define_class!(
     impl App {
         #[unsafe(method(newDocument:))]
         fn new_document(&self, _s: Option<&AnyObject>) {
-            self.add_tab(None, Enc::Utf8, b"");
+            self.add_tab(None, Enc::Utf8, b"", false);
         }
 
         #[unsafe(method(openDocument:))]
@@ -170,7 +171,7 @@ define_class!(
             self.tab_view().removeTabViewItem(&tab.item);
             if self.ivars().tabs.borrow().is_empty() {
                 self.ivars().untitled.set(0);
-                self.add_tab(None, Enc::Utf8, b"");
+                self.add_tab(None, Enc::Utf8, b"", false);
             }
             self.focus();
         }
@@ -348,6 +349,12 @@ define_class!(
             let Some(i) = self.current() else { return };
             let Some(t) = self.tab(i) else { return };
             let e = tag_enc(s.tag());
+            if !matches!((t.enc, e), (Enc::Cp(_), _) | (_, Enc::Cp(_))) {
+                if t.enc != e {
+                    self.set_enc(i, e, t.enc_dirty || should_be_dirty(t.enc, e));
+                }
+                return;
+            }
             if self.dirty(&t) {
                 let r = self.alert(
                     "Save Current Modification",
@@ -429,7 +436,7 @@ define_class!(
                 self.open_path(&std::path::absolute(&a).unwrap_or(a.into()));
             }
             if self.ivars().tabs.borrow().is_empty() {
-                self.add_tab(None, Enc::Utf8, b"");
+                self.add_tab(None, Enc::Utf8, b"", false);
             }
             NSApplication::sharedApplication(self.mtm()).activate();
         }
@@ -841,8 +848,8 @@ impl App {
         }
         match std::fs::read(path) {
             Ok(b) => {
-                let (enc, text) = encoding::load(&b);
-                self.add_tab(Some(path.to_path_buf()), enc, &text)
+                let (enc, text, lost) = encoding::load(&b);
+                self.add_tab(Some(path.to_path_buf()), enc, &text, lost)
             }
             Err(e) => {
                 self.alert(
@@ -854,7 +861,7 @@ impl App {
         }
     }
 
-    fn add_tab(&self, path: Option<PathBuf>, enc: Enc, text: &[u8]) {
+    fn add_tab(&self, path: Option<PathBuf>, enc: Enc, text: &[u8], lost: bool) {
         let view = sci::new_view();
         sci::set_delegate(&view, self);
         sci::set_bytes(&view, text);
@@ -887,6 +894,7 @@ impl App {
             name,
             enc,
             enc_dirty: false,
+            lost,
         });
         let last = self.ivars().tabs.borrow().len() - 1;
         self.refresh_title(last);
@@ -931,8 +939,11 @@ impl App {
 
     fn load_into(&self, i: usize, b: &[u8], e: Enc) {
         let Some(t) = self.tab(i) else { return };
-        let text = encoding::decode(b, e);
+        let (text, lost) = encoding::decode(b, e);
         sci::reload(&t.view, &text);
+        if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
+            t.lost = lost;
+        }
         sci::set_eol_mode(
             &t.view,
             encoding::detect_eol(&text).unwrap_or(encoding::SC_EOL_CRLF),
@@ -1009,10 +1020,17 @@ impl App {
         let text = sci::bytes(&tab.view);
         let mut enc = tab.enc;
         let bytes = match encoding::encode(&text, enc, false) {
-            Ok(b) => b,
-            Err(n) => {
+            Ok(b) if !tab.lost => b,
+            r => {
+                let name = encoding::name(enc);
+                let msg = match r {
+                    Err(n) => format!("{n} characters cannot be saved in {name}."),
+                    Ok(_) => format!(
+                        "Some bytes of this file could not be read in {name}. Saving changes them."
+                    ),
+                };
                 let r = self.alert(
-                    &format!("{n} characters cannot be saved in {}.", encoding::name(enc)),
+                    &msg,
                     "",
                     &["Save as UTF-8 instead", "Save anyway", "Cancel"],
                 );
@@ -1042,6 +1060,7 @@ impl App {
             t.path = Some(path.clone());
             t.enc = enc;
             t.enc_dirty = false;
+            t.lost = false;
         }
         sci::set_save_point(&tab.view);
         if renamed {
@@ -1126,6 +1145,15 @@ fn tagged(
     let i = item(mtm, title, action, "", t);
     i.setTag(tag);
     i
+}
+
+// NppCommands.cpp IDM_FORMAT_ANSI..IDM_FORMAT_AS_UTF_8: a Unicode mode change only sets the save mode.
+fn should_be_dirty(from: Enc, to: Enc) -> bool {
+    match to {
+        Enc::Utf8 => from != Enc::Ansi,
+        Enc::Ansi => from != Enc::Utf8,
+        _ => true,
+    }
 }
 
 const UNICODE: [(&str, Enc); 5] = [

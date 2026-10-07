@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Enc {
@@ -225,11 +227,7 @@ extern "C" {
 }
 
 extern "C" {
-    fn uchardet_new() -> *mut c_void;
-    fn uchardet_delete(ud: *mut c_void);
-    fn uchardet_handle_data(ud: *mut c_void, data: *const c_char, len: usize) -> i32;
-    fn uchardet_data_end(ud: *mut c_void);
-    fn uchardet_get_charset(ud: *mut c_void) -> *const c_char;
+    fn npp_detect_charset(data: *const c_char, len: usize, out: *mut c_char, out_len: usize);
 }
 
 const CF_UTF8: u32 = 0x0800_0100;
@@ -293,16 +291,16 @@ pub fn codepage_from_name(cs: &str) -> Option<u32> {
 
 // FileManager::detectCodepage: uchardet result, but TIS-620 is ignored.
 fn detect_codepage(b: &[u8]) -> Option<u32> {
-    let cs = unsafe {
-        let ud = uchardet_new();
-        uchardet_handle_data(ud, b.as_ptr() as *const c_char, b.len());
-        uchardet_data_end(ud);
-        let cs = CStr::from_ptr(uchardet_get_charset(ud))
-            .to_string_lossy()
-            .into_owned();
-        uchardet_delete(ud);
-        cs
+    let mut out = [0 as c_char; 64];
+    unsafe {
+        npp_detect_charset(
+            b.as_ptr() as *const c_char,
+            b.len(),
+            out.as_mut_ptr(),
+            out.len(),
+        )
     };
+    let cs = unsafe { CStr::from_ptr(out.as_ptr()) }.to_string_lossy();
     (!cs.eq_ignore_ascii_case("TIS-620")).then(|| codepage_from_name(&cs))?
 }
 
@@ -369,45 +367,75 @@ pub fn supported(cp: u32) -> bool {
     cp == 858 || cf_encoding(cp).is_some()
 }
 
-// One char per byte, as MultiByteToWideChar gives; a byte with no character maps to the same code point.
-fn byte_table(cp: u32) -> Option<[char; 256]> {
-    let e = cf_encoding(if cp == 858 { 850 } else { cp })?;
-    let mut t = [char::REPLACEMENT_CHARACTER; 256];
-    for (i, c) in t.iter_mut().enumerate() {
-        *c = cf_string(&[i as u8], e)
-            .and_then(|s| {
-                let mut out = vec![];
-                cf_bytes(s, 0, CF_UTF8, &mut out);
-                unsafe { CFRelease(s) };
-                String::from_utf8(out).ok().and_then(|x| x.chars().next())
-            })
-            .unwrap_or(char::from(i as u8));
-    }
-    if cp == 858 {
-        t[0xD5] = '\u{20AC}';
-    }
-    Some(t)
+struct Table {
+    dec: [char; 256],
+    enc: HashMap<char, u8>,
 }
 
-fn decode_cp(b: &[u8], cp: u32) -> Vec<u8> {
-    if let Some(t) = byte_table(cp).filter(|_| !MULTI_BYTE.contains(&cp)) {
-        return b
-            .iter()
-            .map(|&c| t[c as usize])
-            .collect::<String>()
-            .into_bytes();
+// One char per byte, as MultiByteToWideChar gives. A byte with no character maps to U+00XX,
+// or to the private use U+F7XX when a real byte already gives U+00XX.
+fn build_table(cp: u32) -> Option<Table> {
+    let e = cf_encoding(if cp == 858 { 850 } else { cp })?;
+    let mut real: [Option<char>; 256] = [None; 256];
+    for (i, c) in real.iter_mut().enumerate() {
+        *c = cf_string(&[i as u8], e).and_then(|s| {
+            let mut out = vec![];
+            cf_bytes(s, 0, CF_UTF8, &mut out);
+            unsafe { CFRelease(s) };
+            String::from_utf8(out).ok().and_then(|x| x.chars().next())
+        });
     }
-    // ponytail: invalid multi byte input decodes as UTF-8 with U+FFFD; the save check then refuses to lose data silently.
+    if cp == 858 {
+        real[0xD5] = Some('\u{20AC}');
+    }
+    let mut enc = HashMap::new();
+    for (i, c) in real.iter().enumerate().rev() {
+        if let Some(c) = c {
+            enc.insert(*c, i as u8);
+        }
+    }
+    let mut dec = ['\0'; 256];
+    for (i, c) in dec.iter_mut().enumerate() {
+        *c = real[i].unwrap_or_else(|| {
+            let latin = char::from(i as u8);
+            let f = if enc.contains_key(&latin) {
+                char::from_u32(0xF700 + i as u32).unwrap()
+            } else {
+                latin
+            };
+            enc.insert(f, i as u8);
+            f
+        });
+    }
+    Some(Table { dec, enc })
+}
+
+fn byte_table(cp: u32) -> Option<&'static Table> {
+    static CACHE: OnceLock<Mutex<HashMap<u32, Option<&'static Table>>>> = OnceLock::new();
+    if MULTI_BYTE.contains(&cp) {
+        return None;
+    }
+    let mut c = CACHE.get_or_init(Default::default).lock().unwrap();
+    *c.entry(cp)
+        .or_insert_with(|| build_table(cp).map(|t| &*Box::leak(Box::new(t))))
+}
+
+// Returns the UTF-8 text and true when some bytes could not be read.
+fn decode_cp(b: &[u8], cp: u32) -> (Vec<u8>, bool) {
+    if let Some(t) = byte_table(cp) {
+        let s: String = b.iter().map(|&c| t.dec[c as usize]).collect();
+        return (s.into_bytes(), false);
+    }
     let Some(s) = cf_encoding(cp).and_then(|e| cf_string(b, e)) else {
-        return String::from_utf8_lossy(b).into_owned().into_bytes();
+        return (String::from_utf8_lossy(b).into_owned().into_bytes(), true);
     };
     let mut out = vec![];
     cf_bytes(s, 0, CF_UTF8, &mut out);
     unsafe { CFRelease(s) };
-    out
+    (out, false)
 }
 
-fn decode_utf16(b: &[u8], be: bool) -> Vec<u8> {
+fn decode_utf16(b: &[u8], be: bool) -> (Vec<u8>, bool) {
     let units = b.chunks_exact(2).map(|c| {
         if be {
             u16::from_be_bytes([c[0], c[1]])
@@ -415,18 +443,25 @@ fn decode_utf16(b: &[u8], be: bool) -> Vec<u8> {
             u16::from_le_bytes([c[0], c[1]])
         }
     });
-    char::decode_utf16(units)
-        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
-        .collect::<String>()
-        .into_bytes()
+    let mut lost = !b.len().is_multiple_of(2);
+    let s: String = char::decode_utf16(units)
+        .map(|c| {
+            c.unwrap_or_else(|_| {
+                lost = true;
+                char::REPLACEMENT_CHARACTER
+            })
+        })
+        .collect();
+    (s.into_bytes(), lost)
 }
 
-// File bytes to the UTF-8 text Scintilla holds; only the BOM of `e` itself is skipped.
-pub fn decode(b: &[u8], e: Enc) -> Vec<u8> {
+// File bytes to the UTF-8 text Scintilla holds, and true when some bytes could not be read.
+// Only the BOM of `e` itself is skipped.
+pub fn decode(b: &[u8], e: Enc) -> (Vec<u8>, bool) {
     let strip = |bom: &[u8]| b.strip_prefix(bom).unwrap_or(b);
     match e {
-        Enc::Utf8 => b.to_vec(),
-        Enc::Utf8Bom => strip(UTF8_BOM).to_vec(),
+        Enc::Utf8 => (b.to_vec(), false),
+        Enc::Utf8Bom => (strip(UTF8_BOM).to_vec(), false),
         Enc::Utf16Be => decode_utf16(strip(b"\xFE\xFF"), true),
         Enc::Utf16Le => decode_utf16(strip(b"\xFF\xFE"), false),
         Enc::Utf16LeNoBom => decode_utf16(b, false),
@@ -435,25 +470,25 @@ pub fn decode(b: &[u8], e: Enc) -> Vec<u8> {
     }
 }
 
-pub fn load(b: &[u8]) -> (Enc, Vec<u8>) {
+pub fn load(b: &[u8]) -> (Enc, Vec<u8>, bool) {
     let e = detect(b);
-    (e, decode(b, e))
+    let (text, lost) = decode(b, e);
+    (e, text, lost)
 }
 
 fn encode_cp(s: &str, cp: u32, out: &mut Vec<u8>) -> usize {
-    if let Some(t) = byte_table(cp).filter(|_| !MULTI_BYTE.contains(&cp)) {
-        let map: std::collections::HashMap<char, u8> =
-            (0..=255u8).rev().map(|i| (t[i as usize], i)).collect();
+    if let Some(t) = byte_table(cp) {
         let mut bad = 0;
         for c in s.chars() {
-            out.push(map.get(&c).copied().unwrap_or_else(|| {
+            out.push(t.enc.get(&c).copied().unwrap_or_else(|| {
                 bad += 1;
                 b'?'
             }));
         }
         return bad;
     }
-    let (Some(e), Some(cf)) = (cf_encoding(cp), cf_string(s.as_bytes(), CF_UTF8)) else {
+    let Some((e, cf)) = cf_encoding(cp).and_then(|e| Some((e, cf_string(s.as_bytes(), CF_UTF8)?)))
+    else {
         return s.chars().count();
     };
     let len = unsafe { CFStringGetLength(cf) };
@@ -526,7 +561,7 @@ mod tests {
         assert_eq!(load(b"\xFF\xFEh\0i\0").1, b"hi");
         assert_eq!(load(b"\xFE\xFF\0h\0i").1, b"hi");
         assert_eq!(load(b"\xEF\xBB\xBFhi").1, b"hi");
-        assert_eq!(decode(b"\xEF\xBB\xBFhi", Enc::Utf8), b"\xEF\xBB\xBFhi");
+        assert_eq!(decode(b"\xEF\xBB\xBFhi", Enc::Utf8).0, b"\xEF\xBB\xBFhi");
     }
 
     #[test]
@@ -564,7 +599,7 @@ mod tests {
     fn invalid_utf8_is_ansi() {
         assert_eq!(utf8_7bits_8bits(b"a\xE9b"), Enc::Ansi);
         assert_eq!(utf8_7bits_8bits(b"a\0b"), Enc::Ansi);
-        assert_eq!(decode(b"caf\xE9", Enc::Ansi), "caf\u{e9}".as_bytes());
+        assert_eq!(decode(b"caf\xE9", Enc::Ansi).0, "caf\u{e9}".as_bytes());
     }
 
     #[test]
@@ -587,7 +622,7 @@ mod tests {
             Enc::Utf16LeNoBom,
         ] {
             let file = encode(text.as_bytes(), e, false).unwrap();
-            assert_eq!(load(&file), (e, text.as_bytes().to_vec()), "{e:?}");
+            assert_eq!(load(&file), (e, text.as_bytes().to_vec(), false), "{e:?}");
         }
         for (s, e) in [
             ("caf\u{e9} \u{20ac}\r\n", Enc::Ansi),
@@ -596,15 +631,19 @@ mod tests {
             ("\u{3b1}\u{3b2}\u{3b3}", Enc::Cp(28597)),
         ] {
             let file = encode(s.as_bytes(), e, false).unwrap();
-            let (got, text) = load(&file);
-            assert_eq!(encode(&decode(&file, e), e, false).unwrap(), file, "{e:?}");
+            let (got, text, _) = load(&file);
+            assert_eq!(
+                encode(&decode(&file, e).0, e, false).unwrap(),
+                file,
+                "{e:?}"
+            );
             if got == e {
                 assert_eq!(text, s.as_bytes());
             }
         }
         let raw = b"\x80\x81\x8D\x8F\x90\x9D\xFF";
         assert_eq!(
-            encode(&decode(raw, Enc::Ansi), Enc::Ansi, false).unwrap(),
+            encode(&decode(raw, Enc::Ansi).0, Enc::Ansi, false).unwrap(),
             raw
         );
     }
@@ -634,7 +673,35 @@ mod tests {
         }
         assert_eq!(name(Enc::Cp(1251)), "Windows-1251");
         assert_eq!(name(Enc::Cp(932)), "Shift-JIS");
-        assert_eq!(decode(b"\xD5", Enc::Cp(858)), "\u{20AC}".as_bytes());
-        assert_eq!(decode(b"\xD5", Enc::Cp(850)), "\u{131}".as_bytes());
+        assert_eq!(decode(b"\xD5", Enc::Cp(858)).0, "\u{20AC}".as_bytes());
+        assert_eq!(decode(b"\xD5", Enc::Cp(850)).0, "\u{131}".as_bytes());
+    }
+
+    #[test]
+    fn every_single_byte_round_trips() {
+        let all: Vec<u8> = (0..=255).collect();
+        let cps = CHARSETS
+            .iter()
+            .flat_map(|(_, l)| l.iter().map(|(_, cp)| *cp));
+        for cp in cps
+            .chain([ANSI_CP])
+            .filter(|cp| supported(*cp) && !MULTI_BYTE.contains(cp))
+        {
+            let (text, lost) = decode(&all, Enc::Cp(cp));
+            assert!(!lost, "{cp}");
+            assert_eq!(encode(&text, Enc::Cp(cp), false).unwrap(), all, "{cp}");
+        }
+        assert_eq!(decode(b"\xE5", Enc::Cp(857)).0, "\u{d5}".as_bytes());
+        assert_eq!(decode(b"\xD5", Enc::Cp(857)).0, "\u{f7d5}".as_bytes());
+    }
+
+    #[test]
+    fn decode_reports_loss() {
+        assert!(decode(b"\xFF\xFEa\0b", Enc::Utf16Le).1);
+        assert!(decode(b"\xFF\xFE\x00\xD8a\0", Enc::Utf16Le).1);
+        assert!(decode(b"\xFE\xFF\xDC\x00", Enc::Utf16Be).1);
+        assert!(!decode(b"\xFF\xFEa\0", Enc::Utf16Le).1);
+        assert!(decode(b"\x82\xA0\xFF\xFF", Enc::Cp(932)).1);
+        assert!(!decode(b"a\xFFb", Enc::Utf8).1);
     }
 }

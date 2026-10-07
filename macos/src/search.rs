@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use crate::encoding::{self, Enc};
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::path::{Path, PathBuf};
 
@@ -505,6 +506,12 @@ pub fn replace_in_files_status(o: &FifOut, not_reloaded: &[PathBuf]) -> String {
             list(&o.skipped)
         );
     }
+    if !o.unreadable.is_empty() {
+        m += &format!(
+            "\nSkipped (cannot read without loss in its encoding): {}",
+            list(&o.unreadable)
+        );
+    }
     for (p, e) in &o.errors {
         m += &format!("\nCannot write {}: {e}", file_name(p));
     }
@@ -723,6 +730,7 @@ pub struct FifOut {
     pub count: usize,
     pub changed: Vec<PathBuf>,
     pub skipped: Vec<PathBuf>,
+    pub unreadable: Vec<PathBuf>,
     pub errors: Vec<(PathBuf, String)>,
 }
 
@@ -749,7 +757,7 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
     let files = walk(&a.dir, &patterns(&a.filters), a.sub, a.hidden);
     let mut body = vec![];
     let (mut count, mut nfiles) = (0, 0);
-    let (mut changed, mut skipped, mut errors) = (vec![], vec![], vec![]);
+    let (mut changed, mut skipped, mut unreadable, mut errors) = (vec![], vec![], vec![], vec![]);
     for f in &files {
         let c = canonical(f);
         if a.replace && a.skip.contains(&c) {
@@ -757,19 +765,27 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
             continue;
         }
         let Ok(b) = std::fs::read(f) else { continue };
-        if is_binary(&b) {
+        let (enc, text, lost) = encoding::load(&b);
+        if is_binary(&b) && !matches!(enc, Enc::Utf16Be | Enc::Utf16Le) {
             continue;
         }
-        let Some(doc) = Doc::new(&b) else { continue };
+        let Some(doc) = Doc::new(&text) else { continue };
         if a.replace {
+            if lost {
+                unreadable.push(f.clone());
+                continue;
+            }
             let n = process(&doc, &a.opts, true, true, (0, doc.len()))?.len();
             if n > 0 {
-                match std::fs::write(f, doc.text()) {
+                let out = encoding::encode(&doc.text(), enc, false).map_err(|n| {
+                    format!("{n} characters cannot be saved in {}", encoding::name(enc))
+                });
+                match out.and_then(|o| std::fs::write(f, o).map_err(|e| e.to_string())) {
                     Ok(()) => {
                         changed.push(c);
                         count += n;
                     }
-                    Err(e) => errors.push((f.clone(), e.to_string())),
+                    Err(e) => errors.push((f.clone(), e)),
                 }
             }
         } else {
@@ -798,6 +814,7 @@ fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
         count,
         changed,
         skipped,
+        unreadable,
         errors,
     })
 }
@@ -1070,6 +1087,64 @@ mod tests {
         assert!(!out.changed.contains(&canonical(&d.join("sub/c.txt"))));
         assert!(replace_in_files_status(&out, &[])
             .ends_with("\nSkipped (unsaved changes in an open tab): c.txt"));
+    }
+
+    #[test]
+    fn replace_in_files_keeps_the_file_encoding() {
+        let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/encodings");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("ansi.txt"), b"caf\xE9 foo\r\n").unwrap();
+        std::fs::write(d.join("odd.txt"), b"\xFF\xFEf\0o\0o\0!").unwrap();
+        let mut utf16 = b"\xFF\xFE".to_vec();
+        "x foo\n"
+            .encode_utf16()
+            .for_each(|u| utf16.extend(u.to_le_bytes()));
+        std::fs::write(d.join("utf16.txt"), &utf16).unwrap();
+        let a = FifArgs {
+            dir: d.clone(),
+            filters: "*.txt".into(),
+            sub: false,
+            hidden: false,
+            opts: Opts {
+                replace: "\u{e9}".into(),
+                ..opts("foo")
+            },
+            replace: true,
+            skip: vec![],
+        };
+        let out = find_in_files(&a).unwrap();
+        assert_eq!(
+            std::fs::read(d.join("ansi.txt")).unwrap(),
+            b"caf\xE9 \xE9\r\n"
+        );
+        let mut want = b"\xFF\xFE".to_vec();
+        "x \u{e9}\n"
+            .encode_utf16()
+            .for_each(|u| want.extend(u.to_le_bytes()));
+        assert_eq!(std::fs::read(d.join("utf16.txt")).unwrap(), want);
+        assert_eq!(
+            std::fs::read(d.join("odd.txt")).unwrap(),
+            b"\xFF\xFEf\0o\0o\0!"
+        );
+        assert_eq!(out.unreadable, [d.join("odd.txt")]);
+        assert!(replace_in_files_status(&out, &[])
+            .ends_with("\nSkipped (cannot read without loss in its encoding): odd.txt"));
+        let find = FifArgs {
+            replace: false,
+            opts: opts("\u{e9}"),
+            ..a
+        };
+        let out = find_in_files(&find).unwrap();
+        let text: Vec<String> = out
+            .lines
+            .iter()
+            .map(|l| String::from_utf8_lossy(&l.text).into_owned())
+            .collect();
+        assert!(
+            text.iter().any(|t| t.ends_with("caf\u{e9} \u{e9}")),
+            "{text:?}"
+        );
     }
 
     #[test]
