@@ -10,6 +10,18 @@ Not affiliated with the Notepad++ project.
 
 2026-10-08:
 
+- Encoding menu: ANSI, UTF-8, UTF-8-BOM, UTF-16 BE BOM, UTF-16 LE BOM, Character sets, and the Convert to items. A checkmark shows the current encoding.
+- Edit > EOL Conversion: Windows (CR LF), Unix (LF), and Macintosh (CR).
+- Files open with the Notepad++ detection order: BOM, then `uchardet` (built from `PowerEditor/src/uchardet`), then the UTF-8 and UTF-16 rules. The first line end sets the EOL mode. New documents are UTF-8 with CR LF.
+- A status bar shows the language, length and lines, Ln, Col, Pos or Sel, the EOL type, the encoding, and INS or OVR.
+- Code page conversion uses macOS CoreFoundation. "ANSI" is Windows-1252, because macOS has no system ANSI code page.
+- Save keeps the encoding and the BOM of the tab. If the encoding cannot store some characters, an alert shows before the write: Save as UTF-8 instead, Save anyway (writes `?`), or Cancel. Notepad++ replaces such characters silently.
+- "Encode in" an encoding reads the file bytes from disk again in that encoding, also for the ANSI, UTF-8, and UTF-16 items. Notepad++ changes these Unicode modes in memory. If the tab has unsaved changes, the Notepad++ "Save Current Modification" question shows first.
+- OEM 720 is in the menu but disabled, because CoreFoundation does not support it. OEM 858 uses the OEM 850 table with the euro sign at 0xD5.
+- UTF-16 LE without a BOM uses a simple test (more than half of the high bytes are zero) in place of the Windows `IsTextUnicode` function.
+- The status bar shows only the single selection forms (Pos and Sel: N | M), not the rectangular or multiple selection forms.
+- Find in Files and Replace in Files still read and write files as bytes. Open tabs reload in their own encoding after Replace in Files.
+
 - Search menu: Find, Replace, Find Next, Find Previous, Find in Files, and Go to Line.
 - Find and Replace use the Notepad++ Boost regex engine (`boostregex/`), built into Scintilla with `SCI_OWNREGEX`.
 - One Find panel holds both the Find and the Replace fields. There is no Mark tab, no search history, and no "In selection" or "Backward direction" option.
@@ -22,7 +34,7 @@ Not affiliated with the Notepad++ project.
 - New native macOS app in Rust (AppKit through the objc2 crates). It replaces the Win32 user interface.
 - Tabs, New, Open, Save, Save As, Close, and a prompt before a modified tab closes.
 - Syntax colours from `langs.model.xml` and `stylers.model.xml` (default theme only).
-- UTF-8 files only. No Find/Replace, sessions, macros, plugins, or preferences yet.
+- UTF-8 files only (changed in a later slice). No Find/Replace, sessions, macros, plugins, or preferences yet.
 - `lexilla/lexers/LexUser.cxx` is not built because it needs `windows.h`. A stub replaces it, so user defined languages have no colours.
 
 ## Build and run
@@ -41,4 +53,5 @@ cargo build --release
 - The code in `macos/` is licensed under GPL-3.0-or-later, the same as Notepad++.
 - Scintilla and Lexilla have their own licence: see `scintilla/License.txt` and `lexilla/License.txt`.
 - The Boost files in `boostregex/boost` are licensed under the Boost Software License 1.0: see `scintilla/test/unit/LICENSE_1_0.txt`.
+- The `uchardet` files in `PowerEditor/src/uchardet` have a tri-licence: MPL 1.1, GPL 2.0 or later, or LGPL 2.1 or later (see their file headers). This app uses them under the GPL.
 - The Rust crates this app uses are licensed under MIT, Apache-2.0, Zlib, or Unlicense terms.

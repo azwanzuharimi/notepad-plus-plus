@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod config;
+mod encoding;
 mod lang;
 mod panel;
 mod sci;
 mod search;
 
+use encoding::Enc;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
-    NSBackingStoreType, NSButton, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem,
-    NSModalResponseOK, NSOpenPanel, NSSavePanel, NSSplitView, NSSplitViewDividerStyle, NSTabView,
-    NSTabViewDelegate, NSTabViewItem, NSTextField, NSView, NSWindow, NSWindowDelegate,
-    NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControlStateValueOff,
+    NSControlStateValueOn, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponseOK,
+    NSOpenPanel, NSSavePanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate,
+    NSTabViewItem, NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
@@ -25,6 +27,10 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+
+const STATUS_H: f64 = 22.;
+// Notepad++ status bar part widths; 0 takes the rest.
+const STATUS_WIDTHS: [f64; 6] = [0., 220., 260., 110., 120., 40.];
 
 static FIF_DONE: Mutex<Option<(bool, Result<FifOut, String>)>> = Mutex::new(None);
 
@@ -58,6 +64,8 @@ struct Tab {
     item: Retained<NSTabViewItem>,
     path: Option<PathBuf>,
     name: String,
+    enc: Enc,
+    enc_dirty: bool,
 }
 
 #[derive(Default)]
@@ -74,6 +82,7 @@ struct Ivars {
     replacing: Cell<bool>,
     find_ui: OnceCell<FindUi>,
     fif_ui: OnceCell<FifUi>,
+    status: OnceCell<Vec<Retained<NSTextField>>>,
 }
 
 #[repr(C)]
@@ -117,7 +126,7 @@ define_class!(
     impl App {
         #[unsafe(method(newDocument:))]
         fn new_document(&self, _s: Option<&AnyObject>) {
-            self.add_tab(None, b"");
+            self.add_tab(None, Enc::Utf8, b"");
         }
 
         #[unsafe(method(openDocument:))]
@@ -161,7 +170,7 @@ define_class!(
             self.tab_view().removeTabViewItem(&tab.item);
             if self.ivars().tabs.borrow().is_empty() {
                 self.ivars().untitled.set(0);
-                self.add_tab(None, b"");
+                self.add_tab(None, Enc::Utf8, b"");
             }
             self.focus();
         }
@@ -172,6 +181,9 @@ define_class!(
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 let n = self.ivars().tabs.borrow().len();
                 (0..n).for_each(|i| self.refresh_title(i));
+            }
+            if h.code == sci::SCN_UPDATEUI && h.id_from != sci::RESULTS_ID {
+                self.update_status();
             }
             if h.code == sci::SCN_DOUBLECLICK && h.id_from == sci::RESULTS_ID {
                 let v = &self.ivars().results.get().unwrap().0;
@@ -331,6 +343,56 @@ define_class!(
             }
         }
 
+        #[unsafe(method(encodeIn:))]
+        fn encode_in(&self, s: &NSMenuItem) {
+            let Some(i) = self.current() else { return };
+            let Some(t) = self.tab(i) else { return };
+            let e = tag_enc(s.tag());
+            if self.dirty(&t) {
+                let r = self.alert(
+                    "Save Current Modification",
+                    "You should save the current modification.\nAll the saved modifications cannot be undone.\n\nContinue?",
+                    &["Yes", "No"],
+                );
+                if r != NSAlertFirstButtonReturn || !self.save(i, false) {
+                    return;
+                }
+            }
+            let Some(path) = self.tab(i).and_then(|t| t.path) else {
+                self.set_enc(i, e, false);
+                return;
+            };
+            match std::fs::read(&path) {
+                Ok(b) => self.load_into(i, &b, e),
+                Err(err) => {
+                    self.alert(&format!("Cannot open {}", path.display()), &err.to_string(), &["OK"]);
+                }
+            }
+        }
+
+        #[unsafe(method(convertTo:))]
+        fn convert_to(&self, s: &NSMenuItem) {
+            let Some(i) = self.current() else { return };
+            let Some(t) = self.tab(i) else { return };
+            let e = tag_enc(s.tag());
+            if t.enc != e && !(e == Enc::Ansi && matches!(t.enc, Enc::Cp(_))) {
+                self.set_enc(i, e, true);
+            }
+        }
+
+        #[unsafe(method(eolConvert:))]
+        fn eol_convert(&self, s: &NSMenuItem) {
+            if let Some(v) = self.editor() {
+                sci::convert_eols(&v, s.tag() as usize);
+                self.update_status();
+            }
+        }
+
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            self.validate(item)
+        }
+
         #[unsafe(method(goToLine:))]
         fn go_to_line(&self, _s: Option<&AnyObject>) {
             let Some(v) = self.editor() else { return };
@@ -367,7 +429,7 @@ define_class!(
                 self.open_path(&std::path::absolute(&a).unwrap_or(a.into()));
             }
             if self.ivars().tabs.borrow().is_empty() {
-                self.add_tab(None, b"");
+                self.add_tab(None, Enc::Utf8, b"");
             }
             NSApplication::sharedApplication(self.mtm()).activate();
         }
@@ -401,6 +463,7 @@ define_class!(
         #[unsafe(method(tabView:didSelectTabViewItem:))]
         fn did_select(&self, _t: &NSTabView, _i: Option<&NSTabViewItem>) {
             self.focus();
+            self.update_status();
         }
     }
 );
@@ -444,7 +507,41 @@ impl App {
         split.setDividerStyle(NSSplitViewDividerStyle::Thin);
         split.addSubview(&tv);
         split.addSubview(&results);
-        w.setContentView(Some(&split));
+        let content = NSView::new(mtm);
+        w.setContentView(Some(&content));
+        let size = content.bounds().size;
+        split.setFrame(NSRect::new(
+            NSPoint::new(0., STATUS_H),
+            NSSize::new(size.width, size.height - STATUS_H),
+        ));
+        split.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        content.addSubview(&split);
+        let mut right = size.width;
+        let mut status = vec![];
+        for wd in STATUS_WIDTHS.iter().rev() {
+            let l = NSTextField::labelWithString(&NSString::new(), mtm);
+            let (x, wd) = if *wd == 0. {
+                (6., right - 6.)
+            } else {
+                (right - wd, *wd)
+            };
+            l.setFrame(NSRect::new(
+                NSPoint::new(x, 3.),
+                NSSize::new(wd - 6., STATUS_H - 6.),
+            ));
+            l.setAutoresizingMask(if x == 6. {
+                NSAutoresizingMaskOptions::ViewWidthSizable
+            } else {
+                NSAutoresizingMaskOptions::ViewMinXMargin
+            });
+            content.addSubview(&l);
+            status.insert(0, l);
+            right = x;
+        }
+        let _ = self.ivars().status.set(status);
         split.setPosition_ofDividerAtIndex(split.frame().size.height, 0);
         w.center();
         w.makeKeyAndOrderFront(None);
@@ -658,7 +755,7 @@ impl App {
     fn unsaved_paths(&self) -> Vec<PathBuf> {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
         tabs.iter()
-            .filter(|t| sci::is_modified(&t.view))
+            .filter(|t| self.dirty(t))
             .filter_map(|t| t.path.as_deref().map(search::canonical))
             .collect()
     }
@@ -677,10 +774,18 @@ impl App {
             if !changed.contains(&search::canonical(p)) {
                 continue;
             }
-            if sci::is_modified(&t.view) {
+            if self.dirty(&t) {
                 kept.push(p.clone());
             } else if let Ok(b) = std::fs::read(p) {
-                sci::reload(&t.view, &b);
+                let i = self
+                    .ivars()
+                    .tabs
+                    .borrow()
+                    .iter()
+                    .position(|x| std::ptr::eq(&*x.item, &*t.item));
+                if let Some(i) = i {
+                    self.load_into(i, &b, t.enc);
+                }
             }
         }
         kept
@@ -735,7 +840,10 @@ impl App {
             return;
         }
         match std::fs::read(path) {
-            Ok(b) => self.add_tab(Some(path.to_path_buf()), &b),
+            Ok(b) => {
+                let (enc, text) = encoding::load(&b);
+                self.add_tab(Some(path.to_path_buf()), enc, &text)
+            }
             Err(e) => {
                 self.alert(
                     &format!("Cannot open {}", path.display()),
@@ -746,10 +854,14 @@ impl App {
         }
     }
 
-    fn add_tab(&self, path: Option<PathBuf>, bytes: &[u8]) {
+    fn add_tab(&self, path: Option<PathBuf>, enc: Enc, text: &[u8]) {
         let view = sci::new_view();
         sci::set_delegate(&view, self);
-        sci::set_bytes(&view, bytes);
+        sci::set_bytes(&view, text);
+        sci::set_eol_mode(
+            &view,
+            encoding::detect_eol(text).unwrap_or(encoding::SC_EOL_CRLF),
+        );
         sci::set_read_only(&view, self.ivars().replacing.get());
         let lang = path
             .as_deref()
@@ -773,16 +885,99 @@ impl App {
             item: item.clone(),
             path,
             name,
+            enc,
+            enc_dirty: false,
         });
         let last = self.ivars().tabs.borrow().len() - 1;
         self.refresh_title(last);
         self.tab_view().addTabViewItem(&item);
         self.tab_view().selectTabViewItem(Some(&item));
+        self.update_status();
+    }
+
+    // Checkmarks for the current encoding and EOL; format commands are off while Replace in Files runs.
+    fn validate(&self, item: &NSMenuItem) -> bool {
+        let Some(action) = item.action() else {
+            return true;
+        };
+        let tab = self.current().and_then(|i| self.tab(i));
+        let checked = match &tab {
+            Some(t) if action == sel!(encodeIn:) => enc_tag(t.enc) == item.tag(),
+            Some(t) if action == sel!(eolConvert:) => sci::eol_mode(&t.view) as isize == item.tag(),
+            _ => false,
+        };
+        item.setState(if checked {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let format = [sel!(encodeIn:), sel!(convertTo:), sel!(eolConvert:)].contains(&action);
+        !(format && (tab.is_none() || self.ivars().replacing.get()))
+            && !matches!(tag_enc(item.tag()), Enc::Cp(cp) if action == sel!(encodeIn:) && !encoding::supported(cp))
+    }
+
+    fn dirty(&self, t: &Tab) -> bool {
+        t.enc_dirty || sci::is_modified(&t.view)
+    }
+
+    fn set_enc(&self, i: usize, e: Enc, dirty: bool) {
+        if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
+            t.enc = e;
+            t.enc_dirty = dirty;
+        }
+        self.refresh_title(i);
+        self.update_status();
+    }
+
+    fn load_into(&self, i: usize, b: &[u8], e: Enc) {
+        let Some(t) = self.tab(i) else { return };
+        let text = encoding::decode(b, e);
+        sci::reload(&t.view, &text);
+        sci::set_eol_mode(
+            &t.view,
+            encoding::detect_eol(&text).unwrap_or(encoding::SC_EOL_CRLF),
+        );
+        self.set_enc(i, e, false);
+    }
+
+    fn update_status(&self) {
+        let Some(t) = self.current().and_then(|i| self.tab(i)) else {
+            return;
+        };
+        let Some(labels) = self.ivars().status.get() else {
+            return;
+        };
+        let v = &t.view;
+        let lang = t
+            .path
+            .as_deref()
+            .and_then(|p| lang::language_for_path(cfg(), p));
+        let (ln, col, pos, sel) = sci::position_info(v);
+        let c = |n: isize| search::commafy(n as usize);
+        let sel = match sel {
+            Some((chars, lines)) => format!("Sel: {} | {}", c(chars), c(lines)),
+            None => format!("Pos: {}", c(pos)),
+        };
+        let texts = [
+            lang::long_name(lang.map_or("normal", |l| l.name.as_str())),
+            format!(
+                "length: {}    lines: {}",
+                c(sci::length(v)),
+                c(sci::line_info(v).1)
+            ),
+            format!("Ln: {}    Col: {}    {sel}", c(ln), c(col)),
+            encoding::eol_name(sci::eol_mode(v)).to_string(),
+            encoding::name(t.enc),
+            if sci::overtype(v) { "OVR" } else { "INS" }.to_string(),
+        ];
+        for (l, s) in labels.iter().zip(texts) {
+            l.setStringValue(&ns(&s));
+        }
     }
 
     fn refresh_title(&self, i: usize) {
         let Some(t) = self.tab(i) else { return };
-        let mark = if sci::is_modified(&t.view) { "*" } else { "" };
+        let mark = if self.dirty(&t) { "*" } else { "" };
         t.item
             .setLabel(&NSString::from_str(&format!("{mark}{}", t.name)));
     }
@@ -811,7 +1006,25 @@ impl App {
                 }
             }
         };
-        if let Err(e) = std::fs::write(&path, sci::bytes(&tab.view)) {
+        let text = sci::bytes(&tab.view);
+        let mut enc = tab.enc;
+        let bytes = match encoding::encode(&text, enc, false) {
+            Ok(b) => b,
+            Err(n) => {
+                let r = self.alert(
+                    &format!("{n} characters cannot be saved in {}.", encoding::name(enc)),
+                    "",
+                    &["Save as UTF-8 instead", "Save anyway", "Cancel"],
+                );
+                if r == NSAlertFirstButtonReturn {
+                    enc = Enc::Utf8;
+                } else if r != NSAlertSecondButtonReturn {
+                    return false;
+                }
+                encoding::encode(&text, enc, true).unwrap_or_default()
+            }
+        };
+        if let Err(e) = std::fs::write(&path, bytes) {
             self.alert(
                 &format!("Cannot save {}", path.display()),
                 &e.to_string(),
@@ -827,18 +1040,21 @@ impl App {
                 .to_string_lossy()
                 .into_owned();
             t.path = Some(path.clone());
+            t.enc = enc;
+            t.enc_dirty = false;
         }
         sci::set_save_point(&tab.view);
         if renamed {
             sci::apply_language(&tab.view, cfg(), lang::language_for_path(cfg(), &path));
         }
         self.refresh_title(i);
+        self.update_status();
         true
     }
 
     fn confirm_close(&self, i: usize) -> bool {
         let Some(tab) = self.tab(i) else { return true };
-        if !sci::is_modified(&tab.view) {
+        if !self.dirty(&tab) {
             return true;
         }
         let r = self.alert(
@@ -884,11 +1100,86 @@ fn item(
 }
 
 fn submenu(mtm: MainThreadMarker, bar: &NSMenu, title: &str, items: Vec<Retained<NSMenuItem>>) {
+    bar.addItem(&nested(mtm, title, items));
+}
+
+fn nested(
+    mtm: MainThreadMarker,
+    title: &str,
+    items: Vec<Retained<NSMenuItem>>,
+) -> Retained<NSMenuItem> {
     let m = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(title));
     items.iter().for_each(|i| m.addItem(i));
     let top = NSMenuItem::new(mtm);
+    top.setTitle(&NSString::from_str(title));
     top.setSubmenu(Some(&m));
-    bar.addItem(&top);
+    top
+}
+
+fn tagged(
+    mtm: MainThreadMarker,
+    title: &str,
+    action: Sel,
+    tag: isize,
+    t: Option<&AnyObject>,
+) -> Retained<NSMenuItem> {
+    let i = item(mtm, title, action, "", t);
+    i.setTag(tag);
+    i
+}
+
+const UNICODE: [(&str, Enc); 5] = [
+    ("ANSI", Enc::Ansi),
+    ("UTF-8", Enc::Utf8),
+    ("UTF-8-BOM", Enc::Utf8Bom),
+    ("UTF-16 BE BOM", Enc::Utf16Be),
+    ("UTF-16 LE BOM", Enc::Utf16Le),
+];
+
+// Menu tag of an encoding: 1 to 5 for the Unicode items, the code page for a character set.
+fn enc_tag(e: Enc) -> isize {
+    match e {
+        Enc::Cp(cp) => cp as isize,
+        e => UNICODE
+            .iter()
+            .position(|(_, u)| *u == e)
+            .map_or(-1, |p| p as isize + 1),
+    }
+}
+
+fn tag_enc(t: isize) -> Enc {
+    match t {
+        1..=5 => UNICODE[t as usize - 1].1,
+        cp => Enc::Cp(cp as u32),
+    }
+}
+
+fn encoding_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<NSMenuItem>> {
+    let mut v: Vec<_> = UNICODE
+        .iter()
+        .map(|(n, e)| tagged(mtm, n, sel!(encodeIn:), enc_tag(*e), t))
+        .collect();
+    let groups = encoding::CHARSETS.iter().map(|(g, list)| {
+        nested(
+            mtm,
+            g,
+            list.iter()
+                .map(|(n, cp)| tagged(mtm, n, sel!(encodeIn:), *cp as isize, t))
+                .collect(),
+        )
+    });
+    v.push(nested(mtm, "Character sets", groups.collect()));
+    v.push(NSMenuItem::separatorItem(mtm));
+    v.extend(UNICODE.iter().map(|(n, e)| {
+        tagged(
+            mtm,
+            &format!("Convert to {n}"),
+            sel!(convertTo:),
+            enc_tag(*e),
+            t,
+        )
+    }));
+    v
 }
 
 fn main() {
@@ -930,6 +1221,34 @@ fn main() {
             item(mtm, "Copy", sel!(copy:), "c", None),
             item(mtm, "Paste", sel!(paste:), "v", None),
             item(mtm, "Select All", sel!(selectAll:), "a", None),
+            NSMenuItem::separatorItem(mtm),
+            nested(
+                mtm,
+                "EOL Conversion",
+                vec![
+                    tagged(
+                        mtm,
+                        "Windows (CR LF)",
+                        sel!(eolConvert:),
+                        encoding::SC_EOL_CRLF as isize,
+                        t,
+                    ),
+                    tagged(
+                        mtm,
+                        "Unix (LF)",
+                        sel!(eolConvert:),
+                        encoding::SC_EOL_LF as isize,
+                        t,
+                    ),
+                    tagged(
+                        mtm,
+                        "Macintosh (CR)",
+                        sel!(eolConvert:),
+                        encoding::SC_EOL_CR as isize,
+                        t,
+                    ),
+                ],
+            ),
         ],
     );
     let replace = item(mtm, "Replace...", sel!(showReplace:), "f", t);
@@ -949,6 +1268,7 @@ fn main() {
             item(mtm, "Go to...", sel!(goToLine:), "l", t),
         ],
     );
+    submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     app.setMainMenu(Some(&bar));
     app.run();
 }
