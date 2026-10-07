@@ -16,6 +16,9 @@ fn base() -> cc::Build {
     b.cpp(true)
         .std("c++17")
         .define("NDEBUG", None)
+        .define("SCI_OWNREGEX", None)
+        .define("BOOST_REGEX_STANDALONE", None)
+        .include("../boostregex")
         .include("../scintilla/include")
         .include("../scintilla/src")
         .include("../lexilla/include")
@@ -27,6 +30,9 @@ fn base() -> cc::Build {
 fn main() {
     base()
         .files(files("../scintilla/src", ".cxx"))
+        .file("../boostregex/BoostRegExSearch.cxx")
+        .file("../boostregex/UTF8DocumentIterator.cxx")
+        .file("src/docsearch.cxx")
         .compile("scintilla");
     base()
         .include("../scintilla/cocoa")
@@ -53,6 +59,8 @@ fn main() {
         "../scintilla/cocoa",
         "../lexilla",
         "src/lexuser_stub.cxx",
+        "../boostregex",
+        "src/docsearch.cxx",
     ] {
         println!("cargo:rerun-if-changed={d}");
     }

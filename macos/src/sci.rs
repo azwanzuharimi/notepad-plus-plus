@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::config::{Config, Style};
 use crate::lang;
+use crate::search::{Doc, Line};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -9,6 +10,22 @@ use std::ffi::{c_void, CString};
 
 pub const SCN_SAVEPOINTREACHED: u32 = 2002;
 pub const SCN_SAVEPOINTLEFT: u32 = 2003;
+pub const SCN_DOUBLECLICK: u32 = 2006;
+pub const RESULTS_ID: usize = 1;
+const SCI_GETCURRENTPOS: u32 = 2008;
+const SCI_GOTOLINE: u32 = 2024;
+const SCI_GETSELECTIONSTART: u32 = 2143;
+const SCI_GETSELECTIONEND: u32 = 2145;
+const SCI_GETLINECOUNT: u32 = 2154;
+const SCI_SETSEL: u32 = 2160;
+pub const SCI_LINEFROMPOSITION: u32 = 2166;
+pub const SCI_POSITIONFROMLINE: u32 = 2167;
+const SCI_SETREADONLY: u32 = 2171;
+const SCI_REPLACETARGET: u32 = 2194;
+const SCI_GETDOCPOINTER: u32 = 2357;
+const SCI_SCROLLRANGE: u32 = 2569;
+const SCI_SETIDENTIFIER: u32 = 2622;
+const SCI_SETTARGETRANGE: u32 = 2686;
 const SCI_GETLENGTH: u32 = 2006;
 const SCI_SETSAVEPOINT: u32 = 2014;
 const SCI_SETCODEPAGE: u32 = 2037;
@@ -45,6 +62,13 @@ extern "C" {
     #[link_name = "OBJC_CLASS_$_ScintillaView"]
     static SCINTILLA_VIEW_CLASS: u8;
     fn CreateLexer(name: *const std::ffi::c_char) -> *mut c_void;
+    fn npp_markings_new() -> *mut c_void;
+    fn npp_markings_set(
+        m: *mut c_void,
+        counts: *const isize,
+        n: isize,
+        pairs: *const isize,
+    ) -> *mut c_void;
 }
 
 pub fn new_view() -> Retained<NSView> {
@@ -85,6 +109,79 @@ pub fn bytes(v: &NSView) -> Vec<u8> {
     send(v, SCI_GETTEXT, n + 1, b.as_mut_ptr() as isize);
     b.truncate(n);
     b
+}
+
+pub fn doc(v: &NSView) -> Doc {
+    Doc::from_pointer(send(v, SCI_GETDOCPOINTER, 0, 0))
+}
+
+pub fn selection(v: &NSView) -> (isize, isize) {
+    (
+        send(v, SCI_GETSELECTIONSTART, 0, 0),
+        send(v, SCI_GETSELECTIONEND, 0, 0),
+    )
+}
+
+pub fn select(v: &NSView, (s, e): (isize, isize)) {
+    send(v, SCI_SETSEL, s as usize, e);
+    send(v, SCI_SCROLLRANGE, e as usize, s);
+}
+
+pub fn line_info(v: &NSView) -> (isize, isize) {
+    let pos = send(v, SCI_GETCURRENTPOS, 0, 0);
+    (
+        send(v, SCI_LINEFROMPOSITION, pos as usize, 0) + 1,
+        send(v, SCI_GETLINECOUNT, 0, 0),
+    )
+}
+
+pub fn goto_line(v: &NSView, line: isize) {
+    send(v, SCI_GOTOLINE, (line - 1).max(0) as usize, 0);
+}
+
+// Search results view: the Notepad++ searchResult lexer reads the match offsets through @MarkingsStruct.
+pub fn setup_results(v: &NSView, cfg: &Config) -> usize {
+    send(v, SCI_SETIDENTIFIER, RESULTS_ID, 0);
+    apply_language(
+        v,
+        cfg,
+        cfg.languages.iter().find(|l| l.name == "searchResult"),
+    );
+    send(v, SCI_SETMARGINWIDTHN, 0, 0);
+    send(v, SCI_SETREADONLY, 1, 0);
+    unsafe { npp_markings_new() as usize }
+}
+
+pub fn prepend_results(v: &NSView, markings: usize, lines: &[Line], text: &[u8]) {
+    let counts: Vec<isize> = lines.iter().map(|l| l.marks.len() as isize).collect();
+    let pairs: Vec<isize> = lines
+        .iter()
+        .flat_map(|l| l.marks.iter().flat_map(|&(s, e)| [s, e]))
+        .collect();
+    let m = unsafe {
+        npp_markings_set(
+            markings as *mut c_void,
+            counts.as_ptr(),
+            counts.len() as isize,
+            pairs.as_ptr(),
+        )
+    };
+    let (k, val) = (
+        CString::new("@MarkingsStruct").unwrap(),
+        CString::new(format!("{m:p}")).unwrap(),
+    );
+    send(
+        v,
+        SCI_SETPROPERTY,
+        k.as_ptr() as usize,
+        val.as_ptr() as isize,
+    );
+    send(v, SCI_SETREADONLY, 0, 0);
+    send(v, SCI_SETTARGETRANGE, 0, 0);
+    send(v, SCI_REPLACETARGET, text.len(), text.as_ptr() as isize);
+    send(v, SCI_SETREADONLY, 1, 0);
+    select(v, (0, 0));
+    send(v, SCI_COLOURISE, 0, -1);
 }
 
 pub fn set_save_point(v: &NSView) {
