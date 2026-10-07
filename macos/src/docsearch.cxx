@@ -74,6 +74,8 @@ intptr_t npp_doc_line_from_pos(Document *d, intptr_t pos) { return d->SciLineFro
 intptr_t npp_doc_line_start(Document *d, intptr_t line) { return d->LineStart(line); }
 intptr_t npp_doc_line_end(Document *d, intptr_t line) { return d->LineEnd(line); }
 intptr_t npp_doc_lines(Document *d) { return d->LinesTotal(); }
+int npp_doc_read_only(Document *d) { return d->IsReadOnly(); }
+void npp_doc_set_read_only(Document *d, int on) { d->SetReadOnly(on); }
 
 // Returns the match position, -1 if none, -2 or -3 for a regex error (see npp_regex_error).
 intptr_t npp_doc_find(Document *d, intptr_t minPos, intptr_t maxPos, const char *s, intptr_t *len, int flags) {

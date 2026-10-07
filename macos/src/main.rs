@@ -561,6 +561,9 @@ impl App {
     // Port of FindReplaceDlg::processReplace.
     fn replace_once(&self, v: &NSView, o: &search::Opts) -> Result<String, String> {
         let doc = sci::doc(v);
+        if doc.read_only() {
+            return Err(search::REPLACE_READ_ONLY.into());
+        }
         let cur = sci::selection(v);
         let Some((m, _)) = search::find_next(&doc, o, cur, false, Next::ForReplace)? else {
             return Ok(search::replace_not_found_status(o));
@@ -747,6 +750,7 @@ impl App {
         let view = sci::new_view();
         sci::set_delegate(&view, self);
         sci::set_bytes(&view, bytes);
+        sci::set_read_only(&view, self.ivars().replacing.get());
         let lang = path
             .as_deref()
             .and_then(|p| lang::language_for_path(cfg(), p));

@@ -48,6 +48,9 @@ extern "C" {
         regex: c_int,
     ) -> isize;
     fn npp_doc_undo_group(d: *mut RawDoc, begin: c_int);
+    fn npp_doc_read_only(d: *mut RawDoc) -> c_int;
+    #[cfg(test)]
+    fn npp_doc_set_read_only(d: *mut RawDoc, on: c_int);
     #[cfg(test)]
     fn npp_doc_undo(d: *mut RawDoc);
 }
@@ -144,6 +147,10 @@ impl Doc {
                 regex as c_int,
             )
         }
+    }
+
+    pub fn read_only(&self) -> bool {
+        unsafe { npp_doc_read_only(self.p) != 0 }
     }
 
     pub fn undo_group(&self, begin: bool) {
@@ -357,6 +364,9 @@ pub fn process(
     if pat.is_empty() || start == end {
         return Ok(out);
     }
+    if replace && doc.read_only() {
+        return Err(REPLACE_ALL_READ_ONLY.into());
+    }
     let mut flags = o.flags() | SCFIND_REGEXP_SKIPCRLFASONE;
     if allow_empty {
         flags |= SCFIND_REGEXP_EMPTYMATCH_NOTAFTERMATCH;
@@ -460,6 +470,10 @@ fn regex_error_status(e: &str) -> String {
     format!("Find: Invalid Regular Expression\n{e}")
 }
 
+pub const REPLACE_ALL_READ_ONLY: &str =
+    "Replace All: Cannot replace text. The current document is read only.";
+pub const REPLACE_READ_ONLY: &str =
+    "Replace: Cannot replace text. The current document is read only.";
 pub const END_REACHED: &str = "Find: Reached document end, first occurrence from the top found.";
 pub const TOP_REACHED: &str =
     "Find:  Reached document beginning, first occurrence from the bottom found.";
@@ -1165,6 +1179,21 @@ mod tests {
         assert_eq!(d.text(), b"bb bb bb");
         unsafe { npp_doc_undo(d.p) };
         assert_eq!(d.text(), b"a a a");
+    }
+
+    #[test]
+    fn replace_all_refuses_read_only_document() {
+        let d = Doc::new(b"a a").unwrap();
+        unsafe { npp_doc_set_read_only(d.p, 1) };
+        let o = Opts {
+            replace: "b".into(),
+            ..opts("a")
+        };
+        assert_eq!(
+            replace_all(&d, &o, (0, 3)),
+            Err(REPLACE_ALL_READ_ONLY.to_string())
+        );
+        assert_eq!(d.text(), b"a a");
     }
 
     #[test]
