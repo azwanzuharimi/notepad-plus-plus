@@ -1,0 +1,385 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+use crate::config::{Config, Language};
+use std::path::Path;
+
+// Copied from ScintillaEditView::_langNameInfoArray (language name, Lexilla lexer name).
+const LEXERS: &[(&str, &str)] = &[
+    ("php", "phpscript"),
+    ("c", "cpp"),
+    ("cpp", "cpp"),
+    ("cs", "cpp"),
+    ("objc", "objc"),
+    ("java", "cpp"),
+    ("rc", "cpp"),
+    ("html", "hypertext"),
+    ("xml", "xml"),
+    ("makefile", "makefile"),
+    ("pascal", "pascal"),
+    ("batch", "batch"),
+    ("ini", "props"),
+    ("asp", "hypertext"),
+    ("sql", "sql"),
+    ("vb", "vb"),
+    ("javascript", "cpp"),
+    ("css", "css"),
+    ("perl", "perl"),
+    ("python", "python"),
+    ("lua", "lua"),
+    ("tex", "tex"),
+    ("fortran", "fortran"),
+    ("bash", "bash"),
+    ("actionscript", "cpp"),
+    ("nsis", "nsis"),
+    ("tcl", "tcl"),
+    ("lisp", "lisp"),
+    ("scheme", "lisp"),
+    ("asm", "asm"),
+    ("diff", "diff"),
+    ("props", "props"),
+    ("postscript", "ps"),
+    ("ruby", "ruby"),
+    ("smalltalk", "smalltalk"),
+    ("vhdl", "vhdl"),
+    ("kix", "kix"),
+    ("autoit", "au3"),
+    ("caml", "caml"),
+    ("ada", "ada"),
+    ("verilog", "verilog"),
+    ("matlab", "matlab"),
+    ("haskell", "haskell"),
+    ("inno", "inno"),
+    ("searchResult", "searchResult"),
+    ("cmake", "cmake"),
+    ("yaml", "yaml"),
+    ("cobol", "COBOL"),
+    ("gui4cli", "gui4cli"),
+    ("d", "d"),
+    ("powershell", "powershell"),
+    ("r", "r"),
+    ("jsp", "hypertext"),
+    ("coffeescript", "coffeescript"),
+    ("json", "json"),
+    ("javascript.js", "cpp"),
+    ("fortran77", "f77"),
+    ("baanc", "baan"),
+    ("srec", "srec"),
+    ("ihex", "ihex"),
+    ("tehex", "tehex"),
+    ("swift", "cpp"),
+    ("asn1", "asn1"),
+    ("avs", "avs"),
+    ("blitzbasic", "blitzbasic"),
+    ("purebasic", "purebasic"),
+    ("freebasic", "freebasic"),
+    ("csound", "csound"),
+    ("erlang", "erlang"),
+    ("escript", "escript"),
+    ("forth", "forth"),
+    ("latex", "latex"),
+    ("mmixal", "mmixal"),
+    ("nim", "nimrod"),
+    ("nncrontab", "nncrontab"),
+    ("oscript", "oscript"),
+    ("rebol", "rebol"),
+    ("registry", "registry"),
+    ("rust", "rust"),
+    ("spice", "spice"),
+    ("txt2tags", "txt2tags"),
+    ("visualprolog", "visualprolog"),
+    ("typescript", "cpp"),
+    ("json5", "json"),
+    ("mssql", "mssql"),
+    ("gdscript", "gdscript"),
+    ("hollywood", "hollywood"),
+    ("go", "cpp"),
+    ("raku", "raku"),
+    ("toml", "toml"),
+    ("sas", "sas"),
+    ("errorlist", "errorlist"),
+    ("escseq", "escseq"),
+    ("fcST", "fcST"),
+];
+
+const KW_CLASSES: [&str; 9] = [
+    "instre1", "instre2", "type1", "type2", "type3", "type4", "type5", "type6", "type7",
+];
+
+pub struct Setup<'a> {
+    pub lexer: &'static str,
+    pub keywords: Vec<(usize, &'a str)>,
+    pub stylers: Vec<&'a str>,
+    pub props: Vec<(&'static str, &'static str)>,
+    pub eol_filled: Vec<usize>,
+}
+
+pub fn lexer_name(lang: &str) -> &'static str {
+    LEXERS
+        .iter()
+        .find(|(l, _)| *l == lang)
+        .map_or("null", |(_, x)| x)
+}
+
+pub fn language_for_path<'a>(cfg: &'a Config, path: &Path) -> Option<&'a Language> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    cfg.languages.iter().rev().find(|l| l.exts.contains(&ext))
+}
+
+fn words<'a>(cfg: &'a Config, lang: &str, class: &str) -> Option<&'a str> {
+    let l = cfg.languages.iter().find(|l| l.name == lang)?;
+    l.keywords
+        .iter()
+        .find(|(c, _)| c == class)
+        .map(|(_, w)| w.as_str())
+}
+
+// Mirrors ScintillaEditView.cpp lexer setup: keywords, stylers, properties and EOL fill per language (no fold properties).
+pub fn setup<'a>(cfg: &'a Config, name: &'a str) -> Setup<'a> {
+    let pick = |list: &[(usize, &str, &str)]| -> Vec<(usize, &'a str)> {
+        list.iter()
+            .filter_map(|&(i, l, c)| Some((i, words(cfg, l, c)?)))
+            .collect()
+    };
+    let doxygen = (2, "cpp", "type2");
+    let track = ("lexer.cpp.track.preprocessor", "0");
+    let backquoted = |v| ("lexer.cpp.backquoted.strings", v);
+    let (keywords, stylers, props) = match name {
+        "c" | "cpp" | "java" | "cs" | "actionscript" | "swift" | "go" => (
+            pick(&[
+                (0, name, "instre1"),
+                (1, name, "type1"),
+                (3, name, "instre2"),
+                doxygen,
+            ]),
+            vec![name],
+            if name == "go" {
+                vec![backquoted("1"), track]
+            } else {
+                vec![track]
+            },
+        ),
+        "rc" => (
+            pick(&[
+                (0, name, "instre1"),
+                (1, name, "type1"),
+                (3, name, "instre2"),
+            ]),
+            vec![name],
+            vec![track],
+        ),
+        "javascript" | "javascript.js" => (
+            pick(&[
+                (0, "javascript.js", "instre1"),
+                (1, "javascript.js", "type1"),
+                (3, "javascript.js", "instre2"),
+                doxygen,
+            ]),
+            vec!["javascript.js"],
+            vec![track, backquoted("2")],
+        ),
+        "typescript" => (
+            pick(&[(0, name, "instre1"), (1, name, "type1"), doxygen]),
+            vec![name],
+            vec![track, backquoted("1")],
+        ),
+        "objc" => (
+            pick(&[
+                (0, name, "instre1"),
+                (1, name, "type1"),
+                doxygen,
+                (3, name, "instre2"),
+                (4, name, "type2"),
+            ]),
+            vec![name],
+            vec![],
+        ),
+        "xml" => (
+            pick(&[(5, name, "instre1")]),
+            vec![name],
+            vec![("lexer.xml.allow.scripts", "0")],
+        ),
+        "html" | "php" | "asp" | "jsp" => {
+            return Setup {
+                lexer: "hypertext",
+                keywords: pick(&[
+                    (0, "html", "instre1"),
+                    (5, "html", "instre2"),
+                    (1, "javascript", "instre1"),
+                    (4, "php", "instre1"),
+                    (2, "vb", "instre1"),
+                ]),
+                stylers: vec!["html", "javascript", "php", "asp"],
+                props: vec![("asp.default.language", "2")],
+                eol_filled: vec![41, 42, 44, 53, 68, 118, 124, 81],
+            };
+        }
+        _ => {
+            let own = cfg.languages.iter().find(|l| l.name == name);
+            let kws = own.map_or(vec![], |l| {
+                l.keywords
+                    .iter()
+                    .filter_map(|(c, w)| {
+                        Some((KW_CLASSES.iter().position(|k| k == c)?, w.as_str()))
+                    })
+                    .collect()
+            });
+            (kws, vec![name], vec![])
+        }
+    };
+    Setup {
+        lexer: lexer_name(name),
+        keywords,
+        stylers,
+        props,
+        eol_filled: vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::load;
+
+    fn lang_of(c: &Config, p: &str) -> String {
+        language_for_path(c, Path::new(p))
+            .map(|l| l.name.clone())
+            .unwrap_or_default()
+    }
+
+    fn kw<'a>(s: &Setup<'a>, i: usize) -> Vec<&'a str> {
+        s.keywords
+            .iter()
+            .filter(|k| k.0 == i)
+            .map(|k| k.1)
+            .collect()
+    }
+
+    fn has(s: &Setup, i: usize, word: &str) -> bool {
+        kw(s, i)
+            .iter()
+            .any(|w| w.split_whitespace().any(|x| x == word))
+    }
+
+    #[test]
+    fn ext_mapping() {
+        let c = load();
+        assert_eq!(lang_of(&c, "/a/b.py"), "python");
+        assert_eq!(lang_of(&c, "x.CPP"), "cpp");
+        assert_eq!(lang_of(&c, "x.h"), "cpp");
+        assert_eq!(lang_of(&c, "x.rs"), "rust");
+        assert_eq!(lang_of(&c, "x.unknownext"), "");
+        assert_eq!(lang_of(&c, "noext"), "");
+    }
+
+    #[test]
+    fn ext_mapping_searches_from_end() {
+        let c = load();
+        assert_eq!(lang_of(&c, "paper.tex"), "tex");
+    }
+
+    #[test]
+    fn lexers() {
+        assert_eq!(lexer_name("python"), "python");
+        assert_eq!(lexer_name("cpp"), "cpp");
+        assert_eq!(lexer_name("javascript.js"), "cpp");
+        assert_eq!(lexer_name("html"), "hypertext");
+        assert_eq!(lexer_name("normal"), "null");
+        assert_eq!(lexer_name("nope"), "null");
+        let c = load();
+        for l in c
+            .languages
+            .iter()
+            .filter(|l| !["normal", "nfo"].contains(&l.name.as_str()))
+        {
+            assert_ne!(lexer_name(&l.name), "null", "{}", l.name);
+        }
+    }
+
+    #[test]
+    fn generic_keywords() {
+        let c = load();
+        let s = setup(&c, "python");
+        assert_eq!(s.lexer, "python");
+        assert!(has(&s, 0, "lambda"));
+        assert!(has(&s, 1, "ArithmeticError"));
+        assert_eq!(s.stylers, ["python"]);
+    }
+
+    #[test]
+    fn cpp_keywords() {
+        let c = load();
+        let s = setup(&c, "cpp");
+        assert!(has(&s, 0, "co_await"));
+        assert!(has(&s, 1, "constexpr"));
+        assert!(has(&s, 2, "brief"));
+        assert!(kw(&s, 3).len() <= 1);
+        let s = setup(&c, "swift");
+        assert_eq!(s.lexer, "cpp");
+        assert!(has(&s, 2, "brief"));
+        assert!(kw(&setup(&c, "rc"), 2).is_empty());
+    }
+
+    #[test]
+    fn javascript_keywords() {
+        let c = load();
+        let s = setup(&c, "javascript.js");
+        assert_eq!(s.lexer, "cpp");
+        assert!(has(&s, 0, "function"));
+        assert!(has(&s, 2, "brief"));
+        assert_eq!(s.stylers, ["javascript.js"]);
+    }
+
+    #[test]
+    fn objc_keywords() {
+        let c = load();
+        let s = setup(&c, "objc");
+        assert_eq!(s.lexer, "objc");
+        for (i, class) in [(0, "instre1"), (1, "type1"), (3, "instre2"), (4, "type2")] {
+            let want = words(&c, "objc", class).unwrap();
+            assert_eq!(kw(&s, i), [want], "{class}");
+        }
+        assert!(has(&s, 2, "brief"));
+    }
+
+    #[test]
+    fn xml_keywords() {
+        let c = load();
+        let s = setup(&c, "xml");
+        assert_eq!(s.lexer, "xml");
+        assert_eq!(kw(&s, 5), [words(&c, "xml", "instre1").unwrap()]);
+        assert!(kw(&s, 0).is_empty());
+        assert!(s.props.contains(&("lexer.xml.allow.scripts", "0")));
+    }
+
+    #[test]
+    fn html_family_keywords() {
+        let c = load();
+        for name in ["html", "php", "asp", "jsp"] {
+            let s = setup(&c, name);
+            assert_eq!(s.lexer, "hypertext", "{name}");
+            assert!(has(&s, 0, "div"), "{name}");
+            assert_eq!(kw(&s, 5), [words(&c, "html", "instre2").unwrap()]);
+            assert!(has(&s, 1, "function"), "{name}");
+            assert!(has(&s, 4, "echo"), "{name}");
+            assert_eq!(kw(&s, 2), [words(&c, "vb", "instre1").unwrap()]);
+            assert_eq!(s.stylers, ["html", "javascript", "php", "asp"]);
+            assert!(s.props.contains(&("asp.default.language", "2")));
+        }
+    }
+
+    #[test]
+    fn lexer_properties() {
+        let c = load();
+        let track = ("lexer.cpp.track.preprocessor", "0");
+        let bq = |v| ("lexer.cpp.backquoted.strings", v);
+        for name in ["c", "cpp", "java", "rc", "cs", "actionscript", "swift"] {
+            assert_eq!(setup(&c, name).props, [track], "{name}");
+        }
+        assert_eq!(setup(&c, "go").props, [bq("1"), track]);
+        assert_eq!(setup(&c, "javascript.js").props, [track, bq("2")]);
+        assert_eq!(setup(&c, "typescript").props, [track, bq("1")]);
+        assert!(setup(&c, "objc").props.is_empty());
+        let h = setup(&c, "php");
+        assert_eq!(h.eol_filled, [41, 42, 44, 53, 68, 118, 124, 81]);
+        assert!(setup(&c, "python").eol_filled.is_empty());
+    }
+}

@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::Reader;
+
+#[derive(Debug, Clone, Default)]
+pub struct Language {
+    pub name: String,
+    pub exts: Vec<String>,
+    pub keywords: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Style {
+    pub name: String,
+    pub id: usize,
+    pub fg: Option<isize>,
+    pub bg: Option<isize>,
+    pub font_name: String,
+    pub font_style: Option<u32>,
+    pub font_size: Option<isize>,
+}
+
+#[derive(Debug, Default)]
+pub struct Config {
+    pub languages: Vec<Language>,
+    pub lexer_styles: Vec<(String, Vec<Style>)>,
+    pub global_styles: Vec<Style>,
+}
+
+pub fn rgb_to_bgr(hex: &str) -> Option<isize> {
+    let v = u32::from_str_radix(hex, 16)
+        .ok()
+        .filter(|_| hex.len() == 6)?;
+    Some((((v & 0xFF) << 16) | (v & 0xFF00) | (v >> 16)) as isize)
+}
+
+const LANGS: &str = include_str!("../../PowerEditor/src/langs.model.xml");
+const STYLERS: &str = include_str!("../../PowerEditor/src/stylers.model.xml");
+
+fn attr(e: &BytesStart, key: &str) -> String {
+    e.try_get_attribute(key)
+        .ok()
+        .flatten()
+        .and_then(|a| {
+            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+                .map(|v| v.into_owned())
+        })
+        .unwrap_or_default()
+}
+
+fn style(e: &BytesStart) -> Style {
+    Style {
+        name: attr(e, "name"),
+        id: attr(e, "styleID").parse().unwrap_or(0),
+        fg: rgb_to_bgr(&attr(e, "fgColor")),
+        bg: rgb_to_bgr(&attr(e, "bgColor")),
+        font_name: attr(e, "fontName"),
+        font_style: attr(e, "fontStyle").parse().ok(),
+        font_size: attr(e, "fontSize").parse().ok(),
+    }
+}
+
+pub fn load() -> Config {
+    let mut c = Config::default();
+    let mut r = Reader::from_str(LANGS);
+    let mut kw: Option<(String, String)> = None;
+    loop {
+        match r.read_event().expect("langs.model.xml") {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == "Language" => {
+                c.languages.push(Language {
+                    name: attr(&e, "name"),
+                    exts: attr(&e, "ext")
+                        .split_whitespace()
+                        .map(str::to_lowercase)
+                        .collect(),
+                    keywords: vec![],
+                })
+            }
+            Event::Start(e) if e.name().as_ref() == "Keywords" => {
+                kw = Some((attr(&e, "name"), String::new()))
+            }
+            Event::Text(t) => {
+                if let Some((_, s)) = kw.as_mut() {
+                    s.push_str(&t.xml10_content());
+                }
+            }
+            Event::GeneralRef(g) => {
+                if let Some((_, s)) = kw.as_mut() {
+                    s.push_str(quick_xml::escape::resolve_predefined_entity(&g).unwrap_or(""));
+                }
+            }
+            Event::End(e) if e.name().as_ref() == "Keywords" => {
+                if let (Some(k), Some(l)) = (kw.take(), c.languages.last_mut()) {
+                    l.keywords.push(k);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    let mut r = Reader::from_str(STYLERS);
+    let mut in_global = false;
+    loop {
+        match r.read_event().expect("stylers.model.xml") {
+            Event::Start(e) if e.name().as_ref() == "LexerType" => {
+                c.lexer_styles.push((attr(&e, "name"), vec![]))
+            }
+            Event::Start(e) if e.name().as_ref() == "GlobalStyles" => in_global = true,
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == "WordsStyle" => {
+                if let Some((_, v)) = c.lexer_styles.last_mut() {
+                    v.push(style(&e));
+                }
+            }
+            Event::Start(e) | Event::Empty(e)
+                if in_global && e.name().as_ref() == "WidgetStyle" =>
+            {
+                c.global_styles.push(style(&e))
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colour_hex_to_bgr() {
+        assert_eq!(rgb_to_bgr("FF8000"), Some(0x0080FF));
+        assert_eq!(rgb_to_bgr("E8E8FF"), Some(0xFFE8E8));
+        assert_eq!(rgb_to_bgr(""), None);
+        assert_eq!(rgb_to_bgr("zz"), None);
+    }
+
+    #[test]
+    fn langs_parsed() {
+        let c = load();
+        assert!(c.languages.len() >= 95, "{}", c.languages.len());
+        let py = c.languages.iter().find(|l| l.name == "python").unwrap();
+        assert!(py.exts.contains(&"py".to_string()));
+        let kw = &py.keywords.iter().find(|(k, _)| k == "instre1").unwrap().1;
+        assert!(kw.split_whitespace().any(|w| w == "lambda"));
+    }
+
+    #[test]
+    fn styles_parsed() {
+        let c = load();
+        let py = &c
+            .lexer_styles
+            .iter()
+            .find(|(n, _)| n == "python")
+            .unwrap()
+            .1;
+        let kw = py.iter().find(|s| s.id == 5).unwrap();
+        assert_eq!(kw.fg, Some(0xFF0000));
+        assert_eq!(kw.font_style, Some(1));
+        let def = c.global_styles.iter().find(|s| s.id == 32).unwrap();
+        assert_eq!(def.font_name, "Courier New");
+        assert_eq!(def.font_size, Some(10));
+        let caret = c
+            .global_styles
+            .iter()
+            .find(|s| s.name == "Current line background colour")
+            .unwrap();
+        assert_eq!(caret.bg, Some(0xFFE8E8));
+        assert_eq!(caret.fg, None);
+    }
+}
