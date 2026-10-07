@@ -473,7 +473,15 @@ pub fn replace_in_files_status(n: usize, skipped: &[PathBuf]) -> String {
         format!("Replace in Files: {n} occurrences were replaced.")
     };
     if !skipped.is_empty() {
-        let names: Vec<String> = skipped.iter().map(|p| p.display().to_string()).collect();
+        let names: Vec<String> = skipped
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
         m += &format!(
             "\nSkipped (unsaved changes in an open tab): {}",
             names.join(", ")
@@ -989,12 +997,8 @@ mod tests {
         );
         assert!(out.changed.contains(&canonical(&d.join("a.txt"))));
         assert!(!out.changed.contains(&canonical(&d.join("sub/c.txt"))));
-        assert!(
-            replace_in_files_status(out.count, &out.skipped).ends_with(&format!(
-                "\nSkipped (unsaved changes in an open tab): {}",
-                d.join("sub/c.txt").display()
-            ))
-        );
+        assert!(replace_in_files_status(out.count, &out.skipped)
+            .ends_with("\nSkipped (unsaved changes in an open tab): c.txt"));
     }
 
     #[test]
