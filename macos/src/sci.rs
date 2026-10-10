@@ -11,6 +11,7 @@ use std::ffi::{c_void, CString};
 pub const SCN_SAVEPOINTREACHED: u32 = 2002;
 pub const SCN_SAVEPOINTLEFT: u32 = 2003;
 pub const SCN_DOUBLECLICK: u32 = 2006;
+pub const SCN_UPDATEUI: u32 = 2007;
 pub const RESULTS_ID: usize = 1;
 const SCI_CLEARALL: u32 = 2004;
 const SCI_GETCURRENTPOS: u32 = 2008;
@@ -29,6 +30,12 @@ const SCI_SCROLLRANGE: u32 = 2569;
 const SCI_SETIDENTIFIER: u32 = 2622;
 const SCI_SETTARGETRANGE: u32 = 2686;
 const SCI_GETLENGTH: u32 = 2006;
+const SCI_CONVERTEOLS: u32 = 2029;
+const SCI_GETEOLMODE: u32 = 2030;
+const SCI_SETEOLMODE: u32 = 2031;
+const SCI_GETCOLUMN: u32 = 2129;
+const SCI_GETOVERTYPE: u32 = 2187;
+const SCI_COUNTCHARACTERS: u32 = 2633;
 const SCI_SETSAVEPOINT: u32 = 2014;
 const SCI_SETCODEPAGE: u32 = 2037;
 const SCI_STYLECLEARALL: u32 = 2050;
@@ -105,8 +112,58 @@ pub fn set_bytes(v: &NSView, b: &[u8]) {
     send(v, SCI_SETSAVEPOINT, 0, 0);
 }
 
+pub fn eol_mode(v: &NSView) -> usize {
+    send(v, SCI_GETEOLMODE, 0, 0) as usize
+}
+
+pub fn set_eol_mode(v: &NSView, mode: usize) {
+    send(v, SCI_SETEOLMODE, mode, 0);
+}
+
+pub fn convert_eols(v: &NSView, mode: usize) {
+    send(v, SCI_CONVERTEOLS, mode, 0);
+    set_eol_mode(v, mode);
+}
+
+pub fn overtype(v: &NSView) -> bool {
+    send(v, SCI_GETOVERTYPE, 0, 0) != 0
+}
+
+pub fn length(v: &NSView) -> isize {
+    send(v, SCI_GETLENGTH, 0, 0)
+}
+
+// Ln, Col, Pos and, for a selection, its characters and lines as Notepad++ counts them.
+pub fn position_info(v: &NSView) -> (isize, isize, isize, Option<(isize, isize)>) {
+    let pos = send(v, SCI_GETCURRENTPOS, 0, 0);
+    let line = send(v, SCI_LINEFROMPOSITION, pos as usize, 0);
+    let col = send(v, SCI_GETCOLUMN, pos as usize, 0);
+    let (s, e) = selection(v);
+    let sel = (s != e).then(|| {
+        let (l1, mut l2) = (
+            send(v, SCI_LINEFROMPOSITION, s as usize, 0),
+            send(v, SCI_LINEFROMPOSITION, e as usize, 0),
+        );
+        if l1 != l2 && send(v, SCI_POSITIONFROMLINE, l2 as usize, 0) == e {
+            l2 -= 1;
+        }
+        (send(v, SCI_COUNTCHARACTERS, s as usize, e), l2 - l1 + 1)
+    });
+    (line + 1, col + 1, pos + 1, sel)
+}
+
 pub fn set_read_only(v: &NSView, on: bool) {
     send(v, SCI_SETREADONLY, on as usize, 0);
+}
+
+// Replaces all text as one undo step and keeps the modified state.
+pub fn replace_text(v: &NSView, b: &[u8]) {
+    let clean = !is_modified(v);
+    send(v, SCI_SETTARGETRANGE, 0, length(v));
+    send(v, SCI_REPLACETARGET, b.len(), b.as_ptr() as isize);
+    if clean {
+        set_save_point(v);
+    }
 }
 
 pub fn reload(v: &NSView, b: &[u8]) {

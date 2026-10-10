@@ -119,6 +119,19 @@ pub fn lexer_name(lang: &str) -> &'static str {
         .map_or("null", |(_, x)| x)
 }
 
+const NAME_INFO: &str =
+    include_str!("../../PowerEditor/src/ScintillaComponent/ScintillaEditView.cpp");
+
+// Long name from ScintillaEditView::_langNameInfoArray, as the Notepad++ status bar shows it.
+pub fn long_name(lang: &str) -> String {
+    NAME_INFO
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("{L\""))
+        .map(|l| l.split('"').step_by(2).collect::<Vec<_>>())
+        .find(|f| f.len() > 2 && f[0] == lang)
+        .map_or(lang.to_string(), |f| f[2].to_string())
+}
+
 pub fn language_for_path<'a>(cfg: &'a Config, path: &Path) -> Option<&'a Language> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     cfg.languages.iter().rev().find(|l| l.exts.contains(&ext))
@@ -238,6 +251,14 @@ pub fn setup<'a>(cfg: &'a Config, name: &'a str) -> Setup<'a> {
 mod tests {
     use super::*;
     use crate::config::load;
+
+    #[test]
+    fn long_names() {
+        assert_eq!(long_name("normal"), "Normal text file");
+        assert_eq!(long_name("python"), "Python file");
+        assert_eq!(long_name("cpp"), "C++ source file");
+        assert_eq!(long_name("toml"), "Tom's Obvious Minimal Language file");
+    }
 
     fn lang_of(c: &Config, p: &str) -> String {
         language_for_path(c, Path::new(p))
