@@ -15,7 +15,7 @@ Not affiliated with the Notepad++ project.
 - At start, if a file changed on disk after its backup, Notepad++'s "This file has been modified by another program. Do you want to reload it and lose the changes made in Notepad++?" question shows. No is the default.
 - A backup is deleted when its tab is saved, or closed without a save. The app never deletes other files in the backup folder. A backup that does not load stays. An unreadable `session.xml` is moved to `session.xml.unreadable`.
 - In snapshot mode, if the app panics on the main thread, it writes the backups and `session.xml` before it stops. A panic on another thread writes nothing; the last periodic backup is at most 7 seconds old.
-- Backup on save: None (default), Simple (`<file>.bak` next to the file), or Verbose (`nppBackup/<file>.<YYYY-MM-DD_HHMMSS>.bak`), with an optional custom folder, as in Notepad++. The settings are read from `<GUIConfig name="Backup" ...>` in `config.xml`. There is no Preferences page for them yet.
+- Backup on save: None (default), Simple (`<file>.bak` next to the file), or Verbose (`nppBackup/<file>.<YYYY-MM-DD_HHMMSS>.bak`), with an optional custom folder, as in Notepad++. Settings > Preferences > Backup has the Notepad++ controls: Remember current session for next launch, Enable session snapshot and periodic backup with the seconds, the backup path, Backup on save, and Custom Backup Directory. They are stored in `<GUIConfig name="Backup" ...>` and `RememberLastSession` of `config.xml`. There is no "Remember inaccessible files from past session" option.
 - A backup of a tab whose text the encoding cannot hold is written as UTF-8 with a BOM. A character set tab keeps its character set after a restore, so Save shows the "characters cannot be saved" question. For ANSI and UTF-16 tabs an alert tells you once that the tab opens as UTF-8 with BOM after a restore.
 - Not done: a file deleted after its backup opens with its path, not as an untitled tab. Environment variables in the custom backup folder are not expanded.
 
@@ -28,8 +28,8 @@ Not affiliated with the Notepad++ project.
 - The tab settings of a language are saved in `langs.xml` (the `tabSettings` and `backspaceUnindent` attributes of its `<Language>` element), as in Notepad++. When there is no `langs.xml`, the app first copies `langs.model.xml`, as Notepad++ does.
 - Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
 - Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
-- `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page with "Remember current session for next launch" is not in the window yet.
-- Not done: the General, Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Backup, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+- `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page sets them.
+- Not done: the General, Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
 
 2026-10-10 (User Defined Languages):
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::config::{app_support_dir, attr};
+use crate::config::app_support_dir;
 use crate::encoding::{self, Enc};
+use crate::prefs::{self, Prefs};
 use crate::session::{self, FileInfo, Session};
 use crate::{ns, sci, App, Tab};
 use objc2::runtime::AnyObject;
@@ -9,8 +10,6 @@ use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSTabViewItem, NSView,
 };
 use objc2_foundation::{NSArray, NSRunLoopCommonModes};
-use quick_xml::events::Event;
-use quick_xml::Reader;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -57,54 +56,21 @@ impl Default for Settings {
     }
 }
 
-fn bool_attr(v: &str, default: bool) -> bool {
-    match v {
-        "yes" => true,
-        "no" => false,
-        _ => default,
-    }
-}
-
-// Parameters.cpp feedGUIParameters: <GUIConfig name="Backup" ... /> of config.xml.
-pub fn parse_settings(xml: &str) -> Settings {
-    let mut s = Settings::default();
-    let mut r = Reader::from_str(xml);
-    loop {
-        match r.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e))
-                if e.name().as_ref() == "GUIConfig" && attr(&e, "name") == "Backup" =>
-            {
-                s.backup = match attr(&e, "action").trim().parse::<i64>() {
-                    Ok(1) => BackupFeature::Simple,
-                    Ok(2) => BackupFeature::Verbose,
-                    _ => BackupFeature::None,
-                };
-                s.use_dir = attr(&e, "useCustumDir") == "yes";
-                s.backup_dir = attr(&e, "dir");
-                s.snapshot_mode = bool_attr(&attr(&e, "isSnapshotMode"), s.snapshot_mode);
-                if let Ok(n) = attr(&e, "snapshotBackupTiming").trim().parse() {
-                    s.snapshot_timing_ms = n;
-                }
-            }
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
+// NppGUI backup settings from the Preferences; an out of range action is bak_none.
+impl From<&Prefs> for Settings {
+    fn from(p: &Prefs) -> Self {
+        Settings {
+            backup: match p.backup_action {
+                1 => BackupFeature::Simple,
+                2 => BackupFeature::Verbose,
+                _ => BackupFeature::None,
+            },
+            use_dir: p.backup_use_dir,
+            backup_dir: p.backup_dir.clone(),
+            snapshot_mode: p.snapshot_mode && p.remember_session,
+            snapshot_timing_ms: p.snapshot_timing.max(0) as u64,
         }
     }
-    s
-}
-
-// Parameters.cpp writeGUIParams: the element for config.xml.
-#[allow(dead_code)]
-pub fn gui_config(s: &Settings) -> String {
-    let yes_no = |b| if b { "yes" } else { "no" };
-    format!(
-        "<GUIConfig name=\"Backup\" action=\"{}\" useCustumDir=\"{}\" dir=\"{}\" isSnapshotMode=\"{}\" snapshotBackupTiming=\"{}\" />",
-        s.backup as u8,
-        yes_no(s.use_dir),
-        quick_xml::escape::escape(s.backup_dir.as_str()),
-        yes_no(s.snapshot_mode),
-        s.snapshot_timing_ms
-    )
 }
 
 pub fn filetime(t: SystemTime) -> u64 {
@@ -345,7 +311,6 @@ struct State {
     entries: RefCell<HashMap<usize, Entry>>,
     changed: RefCell<HashSet<usize>>,
     stamps: RefCell<HashMap<usize, u64>>,
-    settings: RefCell<Option<Settings>>,
     armed: Cell<bool>,
     last_session: RefCell<String>,
 }
@@ -410,18 +375,9 @@ fn backup_dir() -> Option<PathBuf> {
     app_support_dir().map(|d| d.join("backup"))
 }
 
-// Preferences > Backup; read from config.xml at the first use.
+// Preferences > Backup.
 pub fn settings() -> Settings {
-    ST.with(|s| {
-        s.settings
-            .borrow_mut()
-            .get_or_insert_with(|| {
-                app_support_dir()
-                    .and_then(|d| std::fs::read_to_string(d.join("config.xml")).ok())
-                    .map_or_else(Settings::default, |x| parse_settings(&x))
-            })
-            .clone()
-    })
+    prefs::with(|p| Settings::from(p))
 }
 
 // Parameters.h isSnapshotMode: the option, and the session is remembered.
@@ -439,7 +395,6 @@ fn state_free() -> bool {
         s.entries.try_borrow_mut().is_ok()
             && s.changed.try_borrow_mut().is_ok()
             && s.stamps.try_borrow_mut().is_ok()
-            && s.settings.try_borrow_mut().is_ok()
             && s.last_session.try_borrow_mut().is_ok()
     })
     .unwrap_or(false)
@@ -464,7 +419,8 @@ fn emergency_backup() {
         return;
     }
     let app = unsafe { &*p };
-    if app.ivars().tabs.try_borrow_mut().is_ok() && state_free() && snapshot_on() {
+    let snapshot = prefs::try_get().is_some_and(|p| Settings::from(&p).snapshot_mode);
+    if app.ivars().tabs.try_borrow_mut().is_ok() && state_free() && snapshot && !session::no_session() {
         app.write_backups(true, false);
         app.write_session_now();
     }
@@ -477,10 +433,8 @@ impl App {
         self.arm_backup_timer();
     }
 
-    // For the Preferences dialog: new settings apply at once.
-    #[allow(dead_code)]
-    pub(crate) fn set_backup_settings(&self, s: Settings) {
-        ST.with(|st| *st.settings.borrow_mut() = Some(s));
+    // NPPM_INTERNAL_ENABLESNAPSHOT: a Preferences change starts the timer at once.
+    pub(crate) fn backup_settings_changed(&self) {
         self.arm_backup_timer();
     }
 
@@ -901,25 +855,27 @@ mod tests {
     }
 
     #[test]
-    fn settings_round_trip() {
-        assert_eq!(parse_settings(""), Settings::default());
+    fn settings_from_config() {
         let d = Settings::default();
+        assert_eq!(Settings::from(&Prefs::default()), d);
+        let x = "<NotepadPlus><GUIConfigs><GUIConfig name=\"Backup\" action=\"2\" useCustumDir=\"yes\" dir=\"/tmp/a &amp; b\" isSnapshotMode=\"no\" snapshotBackupTiming=\"3000\" /></GUIConfigs></NotepadPlus>";
+        let s = Settings::from(&prefs::from_config(x));
         assert_eq!(
-            gui_config(&d),
-            "<GUIConfig name=\"Backup\" action=\"0\" useCustumDir=\"no\" dir=\"\" isSnapshotMode=\"yes\" snapshotBackupTiming=\"7000\" />"
+            s,
+            Settings {
+                backup: BackupFeature::Verbose,
+                use_dir: true,
+                backup_dir: "/tmp/a & b".into(),
+                snapshot_mode: false,
+                snapshot_timing_ms: 3000,
+            }
         );
-        let s = Settings {
-            backup: BackupFeature::Verbose,
-            use_dir: true,
-            backup_dir: "/tmp/a & b".into(),
-            snapshot_mode: false,
-            snapshot_timing_ms: 3000,
-        };
-        let x = format!("<NotepadPlus><GUIConfigs><GUIConfig name=\"TabBar\" action=\"2\" />{}</GUIConfigs></NotepadPlus>", gui_config(&s));
-        assert_eq!(parse_settings(&x), s);
-        let bad =
-            parse_settings("<GUIConfig name=\"Backup\" action=\"7\" isSnapshotMode=\"maybe\" />");
-        assert_eq!(bad, d);
+        let bad = "<NotepadPlus><GUIConfigs><GUIConfig name=\"Backup\" action=\"7\" isSnapshotMode=\"maybe\" /><GUIConfig name=\"RememberLastSession\">no</GUIConfig></GUIConfigs></NotepadPlus>";
+        let p = prefs::from_config(bad);
+        assert_eq!(Settings::from(&p).backup, BackupFeature::None);
+        assert!(p.snapshot_mode && !Settings::from(&p).snapshot_mode);
+        let out = prefs::patch(None, &prefs::GUI_PATH, "GUIConfig", &prefs::config_elems(&prefs::from_config(x))).unwrap();
+        assert!(out.contains("<GUIConfig name=\"Backup\" isSnapshotMode=\"no\" snapshotBackupTiming=\"3000\" action=\"2\" useCustumDir=\"yes\" dir=\"/tmp/a &amp; b\" />"));
     }
 
     #[test]
