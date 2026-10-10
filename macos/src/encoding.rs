@@ -304,7 +304,7 @@ fn detect_codepage(b: &[u8]) -> Option<u32> {
     (!cs.eq_ignore_ascii_case("TIS-620")).then(|| codepage_from_name(&cs))?
 }
 
-fn bom(b: &[u8]) -> Option<Enc> {
+pub fn bom(b: &[u8]) -> Option<Enc> {
     if b.starts_with(b"\xFE\xFF") {
         Some(Enc::Utf16Be)
     } else if b.starts_with(b"\xFF\xFE") {
