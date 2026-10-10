@@ -7,7 +7,9 @@ use objc2_app_kit::{
     NSAlert, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags,
     NSFloatingWindowLevel, NSMenuItem, NSNormalWindowLevel, NSView, NSWindow,
 };
-use objc2_foundation::{NSDate, NSDateFormatter, NSDateFormatterStyle, NSUserDefaults};
+use objc2_foundation::{
+    NSDate, NSDateFormatter, NSDateFormatterStyle, NSDictionary, NSNumber, NSUserDefaults,
+};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -574,8 +576,9 @@ fn keyed(
 pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<NSMenuItem>> {
     // Stop AppKit from adding its own full screen and window tab items to the View menu.
     NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
-    NSUserDefaults::standardUserDefaults()
-        .setBool_forKey(false, &ns("NSFullScreenMenuItemEverywhere"));
+    let off: &AnyObject = &NSNumber::new_bool(false);
+    let d = NSDictionary::from_slices(&[&*ns("NSFullScreenMenuItemEverywhere")], &[off]);
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&d) };
     let cmd = NSEventModifierFlags::Command;
     let opt = NSEventModifierFlags::Option;
     let ctrl = NSEventModifierFlags::Control;
@@ -663,7 +666,15 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
     ]);
     let levels = |action: Sel, mods: NSEventModifierFlags| -> Vec<_> {
         (1..=8)
-            .map(|n| keyed(mtm, &n.to_string(), action, n - 1, &n.to_string(), mods, t))
+            .map(|n| {
+                // Ctrl+Opt+Cmd+8 is the macOS Invert colors shortcut.
+                let key = if n == 8 && mods.contains(ctrl) {
+                    String::new()
+                } else {
+                    n.to_string()
+                };
+                keyed(mtm, &n.to_string(), action, n - 1, &key, mods, t)
+            })
             .collect()
     };
     vec![
