@@ -184,6 +184,12 @@ prefs! {
     search_engine: i64 = 2 => "searchEngine" "searchEngineChoice",
     search_engine_custom: String = String::new() => "searchEngine" "searchEngineCustom",
     auto_detect: String = "yes".into() => "Auto-detection" "",
+    tab_hide: bool = false => "TabBar" "hide",
+    tab_drag: bool = true => "TabBar" "dragAndDrop",
+    tab_dbl_close: bool = false => "TabBar" "doubleClick2Close",
+    tab_inactive: bool = true => "TabBar" "drawInactiveTab",
+    tab_top_bar: bool = true => "TabBar" "drawTopBar",
+    tab_close: bool = true => "TabBar" "closeButton",
 }
 
 // NppGUI::AutocStatus.
@@ -1074,7 +1080,8 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 14] = [
+pub const PAGES: [&str; 15] = [
+    "Tab Bar",
     "Editing 1",
     "Editing 2",
     "Margins/Border/Edge",
@@ -1168,6 +1175,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
 #[derive(Clone)]
 enum Bind {
     Check(&'static str, &'static str),
+    Inverse(&'static str, &'static str),
     Bit(&'static str, &'static str, i64),
     Radio(&'static str, &'static str, &'static str),
     Num(&'static str, &'static str, i64, i64),
@@ -1398,6 +1406,17 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
     };
     let sv = SVP;
     vec![
+        page(b, &|b, c, c2| {
+            let t = "TabBar";
+            b.check(c, "Hide", Bind::Check(t, "hide"));
+            c.y += 10.;
+            b.check(c, "Lock (no drag and drop)", Bind::Inverse(t, "dragAndDrop"));
+            b.check(c, "Double click to close document", Bind::Check(t, "doubleClick2Close"));
+            b.check(c2, "Change inactive tab color", Bind::Check(t, "drawInactiveTab"));
+            b.check(c2, "Draw a coloured bar on active tab", Bind::Check(t, "drawTopBar"));
+            c2.y += 10.;
+            b.check(c2, "Show close button", Bind::Check(t, "closeButton"));
+        }),
         page(b, &|b, c, c2| {
             b.group(c, "Current Line Indicator", 270., |b, g| {
                 b.radio(g, "None", Bind::Radio(sv, "currentLineIndicator", "0"));
@@ -1956,6 +1975,7 @@ fn refresh(app: &App) {
                         _ => true,
                     };
                 }
+                Bind::Inverse(g, a) => set_on(c, p.get(g, a) != "yes"),
                 Bind::Bit(g, a, bit) => set_on(c, num(g, a) & bit != 0),
                 Bind::Radio(g, a, v) => {
                     set_on(c, p.get(g, a) == *v);
@@ -2172,6 +2192,7 @@ impl App {
     }
 
     pub(crate) fn apply_prefs(&self) {
+        self.tab_bars_apply();
         self.apply_view_all();
         self.backup_settings_changed();
     }
@@ -2208,6 +2229,7 @@ impl App {
                     update(|x| x.snapshot_mode = false);
                 }
             }
+            Bind::Inverse(g, a) => update(|x| x.set(g, a, &(!on(c)).put())),
             Bind::Bit(g, a, bit) => {
                 let old = p.get(g, a).trim().parse::<i64>().unwrap_or(0);
                 let new = if on(c) { old | bit } else { old & !bit };
@@ -2548,7 +2570,14 @@ mod tests {
             "dir",
         ];
         let p = Prefs::default();
+        let tab_status = member("_tabStatus");
         for (g, a) in Prefs::KEYS {
+            if *g == "TabBar" {
+                let bit = format!("TAB_{}", a.to_uppercase()).replace("DOUBLECLICK2CLOSE", "DBCLK2CLOSE").replace("DRAGANDDROP", "DRAGNDROP");
+                let on = tab_status.split('|').any(|b| b.trim_matches(|c| c == ' ' || c == '(' || c == ')') == bit);
+                assert_eq!(p.get(g, a), if on { "yes" } else { "no" }, "{g} {a}");
+                continue;
+            }
             if no_default.contains(a) {
                 assert_eq!(p.get(g, a), "", "{g} {a}");
                 continue;

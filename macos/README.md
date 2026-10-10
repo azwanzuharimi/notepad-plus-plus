@@ -14,6 +14,10 @@ Not affiliated with the Notepad++ project.
 - A right click outside the selection moves the caret first, as in Notepad++.
 - Settings > Edit Popup ContextMenu writes the default `contextMenu.xml` when the file is missing, then opens it. A change applies at the next start, as in Notepad++.
 - A right click on a tab selects it and shows the Notepad++ tab menu: Close, Close Multiple Tabs, Save, Save As..., Open into (Finder, Terminal, Default Viewer), Rename, Move to Trash, Reload, Read-Only, Copy to Clipboard, and Move Document (Start, End). There is no Pin, Print, other view, new instance, or tab colour. `tabContextMenu.xml` is not read.
+- Each view has its own tab bar, as in Notepad++. Each tab shows an icon for its state (blue saved, red unsaved, grey read-only, green monitoring), its name, and a close button. The active tab has an orange bar on top; inactive tabs are dimmed. A click on the close button or a middle click closes a tab. A double click on empty bar space makes a new document. When the tabs do not fit, arrows (and the scroll wheel) scroll them.
+- Drag a tab to move it in its view, or drop it on the other view to move it there. Hold Option (Ctrl in Notepad++) to clone it to the other view.
+- Settings > Preferences > Tab Bar: Hide, Lock (no drag and drop), Double click to close document, Change inactive tab color, Draw a coloured bar on active tab, Show close button. They are the Notepad++ `TabBar` GUIConfig attributes in `config.xml`.
+- Not done for the tab bar: pin tabs, tab colours (Apply Color 1-5), multi-line and vertical tabs, Reduce, alternate icons, quit on last tab close, close button only on hover, and drop outside the window.
 - View > Hide Lines (Cmd+Opt+H, Alt+H in Notepad++) hides the selected lines with the Notepad++ markers in the bookmark margin. A click on a marker shows the lines again.
 - View > Monitoring (tail -f) makes the tab read-only, checks the file every 250 ms, and reloads it and goes to the end when it changes. Monitoring stops when the file is deleted or renamed. The monitoring state is not saved in the session.
 - View > Post-It (F12) hides the tab bar, the status bar, and the window title, and keeps the window on top. The macOS menu bar stays.
@@ -39,7 +43,7 @@ Not affiliated with the Notepad++ project.
 - Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
 - Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
 - `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page sets them.
-- Not done: the General, Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+- Not done: the General, Toolbar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
 
 2026-10-10 (User Defined Languages):
 

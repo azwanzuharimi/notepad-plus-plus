@@ -32,6 +32,7 @@ mod shortcuts;
 mod session;
 mod style_dlg;
 mod styler;
+mod tabbar;
 mod tools;
 mod udl;
 mod view;
@@ -1127,6 +1128,7 @@ define_class!(
 
         #[unsafe(method(tabViewDidChangeNumberOfTabViewItems:))]
         fn tab_count_changed(&self, _t: &NSTabView) {
+            self.tab_bars_redraw();
             self.doc_list_reload();
         }
 
@@ -1348,6 +1350,7 @@ define_class!(
         #[unsafe(method(tabView:didSelectTabViewItem:))]
         fn did_select(&self, t: &NSTabView, _i: Option<&NSTabViewItem>) {
             self.view_selected(t);
+            self.tab_bars_redraw();
             self.focus();
             self.update_status();
             self.doc_list_reload();
@@ -1884,6 +1887,7 @@ impl App {
             let mark = if self.dirty(t) { "*" } else { "" };
             t.item.setLabel(&NSString::from_str(&format!("{mark}{}", t.name)));
         }
+        self.tab_bars_redraw();
         self.doc_list_reload();
     }
 

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::session::{restore_position, Session};
-use crate::{fileops, item, language, nested, sci, tagged, App, Tab};
+use crate::tabbar::{TabBar, BAR_H};
+use crate::{fileops, item, language, nested, prefs, sci, tagged, App, Tab};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenuItem, NSSplitView,
-    NSSplitViewDividerStyle, NSTabView, NSTabViewItem, NSView, NSWindowOrderingMode,
+    NSAccessibilityTabGroupRole, NSControlStateValueOff, NSControlStateValueOn,
+    NSEventModifierFlags, NSMenuItem, NSSplitView, NSSplitViewDividerStyle, NSTabView,
+    NSTabViewItem, NSTabViewType, NSView, NSWindowOrderingMode,
 };
+use objc2_foundation::{NSArray, NSRect, NSString};
 use std::cell::{Cell, OnceCell};
 use std::ffi::c_void;
 use std::ops::Range;
@@ -51,10 +54,16 @@ struct Header {
     code: u32,
 }
 
+#[derive(Default)]
+pub struct DocIvars {
+    bar: OnceCell<Retained<TabBar>>,
+}
+
 define_class!(
-    // A tab view that sends a select or remove call to the tab view that holds the item.
+    // A tab view that sends a select or remove call to the tab view that holds the item; its own tab bar replaces the AppKit tabs.
     #[unsafe(super(NSTabView))]
     #[thread_kind = MainThreadOnly]
+    #[ivars = DocIvars]
     pub struct DocTabs;
 
     impl DocTabs {
@@ -71,8 +80,50 @@ define_class!(
                     if let (true, Some(d)) = (same, me.delegate()) {
                         let _: () = unsafe { msg_send![&*d, tabView: me, didSelectTabViewItem: item] };
                     }
+                    self.bar_changed();
                 }
             }
+        }
+
+        #[unsafe(method(insertTabViewItem:atIndex:))]
+        fn insert_item(&self, item: &NSTabViewItem, at: isize) {
+            let _: () = unsafe { msg_send![super(self), insertTabViewItem: item, atIndex: at] };
+            self.bar_changed();
+        }
+
+        #[unsafe(method(contentRect))]
+        fn content_rect(&self) -> NSRect {
+            let mut r = self.bounds();
+            if self.ivars().bar.get().is_some_and(|b| !b.isHidden()) {
+                r.size.height = (r.size.height - BAR_H).max(0.);
+                if self.isFlipped() {
+                    r.origin.y += BAR_H;
+                }
+            }
+            r
+        }
+
+        // Post-It sets NoTabsNoBorder to hide the tabs: that hides the bar, and any other type shows it.
+        #[unsafe(method(setTabViewType:))]
+        fn set_tab_view_type(&self, t: NSTabViewType) {
+            let hide = t == NSTabViewType::NoTabsNoBorder;
+            POST_IT.with(|p| p.set(hide));
+            self.show_bar();
+        }
+
+        #[unsafe(method_id(accessibilityRole))]
+        fn ax_role(&self) -> Option<Retained<NSString>> {
+            Some(unsafe { NSAccessibilityTabGroupRole }.retain())
+        }
+
+        #[unsafe(method_id(accessibilityChildren))]
+        fn ax_children(&self) -> Option<Retained<NSArray>> {
+            let sup: Option<Retained<NSArray>> = unsafe { msg_send![super(self), accessibilityChildren] };
+            let mut v = self.ivars().bar.get().map(|b| b.ax_tabs(self)).unwrap_or_default();
+            if let Some(sup) = sup {
+                v.extend(sup.iter());
+            }
+            Some(NSArray::from_retained_slice(&v))
         }
 
         #[unsafe(method(removeTabViewItem:))]
@@ -82,6 +133,7 @@ define_class!(
                 Some(o) if !std::ptr::eq(&*o, me) => o.removeTabViewItem(item),
                 Some(_) => {
                     let _: () = unsafe { msg_send![super(self), removeTabViewItem: item] };
+                    self.bar_changed();
                 }
                 None => {}
             }
@@ -89,10 +141,50 @@ define_class!(
     }
 );
 
+thread_local! {
+    static POST_IT: Cell<bool> = const { Cell::new(false) };
+}
+
 impl DocTabs {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        unsafe { msg_send![Self::alloc(mtm), init] }
+        let this = Self::alloc(mtm).set_ivars(DocIvars::default());
+        let tv: Retained<Self> = unsafe { msg_send![super(this), init] };
+        let _: () =
+            unsafe { msg_send![super(&*tv), setTabViewType: NSTabViewType::NoTabsNoBorder] };
+        let bar = TabBar::new(mtm);
+        bar.place(&tv);
+        tv.addSubview(&bar);
+        let _ = tv.ivars().bar.set(bar);
+        tv.show_bar();
+        tv
     }
+
+    fn bar_changed(&self) {
+        if let Some(b) = self.ivars().bar.get() {
+            b.setNeedsDisplay(true);
+        }
+    }
+
+    // Shows the bar unless Post-It or the "hide" option is on, and fits the selected editor below it.
+    pub fn show_bar(&self) {
+        let Some(b) = self.ivars().bar.get() else {
+            return;
+        };
+        b.setHidden(POST_IT.with(Cell::get) || prefs::get().tab_hide);
+        b.place(self);
+        if let Some(v) = self.selectedTabViewItem().and_then(|i| i.view(self.mtm())) {
+            v.setFrame(self.contentRect());
+        }
+        b.setNeedsDisplay(true);
+    }
+}
+
+pub fn bar_of(tv: &NSTabView) -> Option<&TabBar> {
+    tv.downcast_ref::<DocTabs>()?
+        .ivars()
+        .bar
+        .get()
+        .map(|b| &**b)
 }
 
 // The tab indices of view `p` when the main view tabs come first.

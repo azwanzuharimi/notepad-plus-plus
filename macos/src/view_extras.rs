@@ -275,7 +275,6 @@ pub fn hide_marker_clicked(v: &NSView, line: isize) -> bool {
 
 struct PostIt {
     on_top: bool,
-    tabs: NSTabViewType,
     transparent: bool,
     title: NSWindowTitleVisibility,
 }
@@ -491,7 +490,6 @@ impl App {
             None => {
                 let saved = PostIt {
                     on_top: w.level() == NSFloatingWindowLevel,
-                    tabs: tv.tabViewType(),
                     transparent: w.titlebarAppearsTransparent(),
                     title: w.titleVisibility(),
                 };
@@ -509,8 +507,8 @@ impl App {
                 } else {
                     NSNormalWindowLevel
                 });
-                self.doc_tabs(1).setTabViewType(saved.tabs);
-                tv.setTabViewType(saved.tabs);
+                self.doc_tabs(1).setTabViewType(NSTabViewType::TopTabsBezelBorder);
+                tv.setTabViewType(NSTabViewType::TopTabsBezelBorder);
                 w.setTitlebarAppearsTransparent(saved.transparent);
                 w.setTitleVisibility(saved.title);
                 self.show_status_bar(true);
