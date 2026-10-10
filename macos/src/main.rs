@@ -108,6 +108,7 @@ struct Tab {
     ro: bool,
     file_ro: bool,
     lang: Option<String>,
+    first_line: Option<&'static str>,
     mtime: Option<std::time::SystemTime>,
 }
 
@@ -1876,12 +1877,13 @@ impl App {
         );
         let file_ro = path.as_deref().is_some_and(edit_extras::file_read_only);
         sci::set_read_only(&view, file_ro || self.ivars().replacing.get());
+        let first_line = path
+            .as_deref()
+            .and_then(|p| lang::first_line_language(cfg(), p, udl::matches_file(p), text));
         let lang = match path.as_deref() {
-            Some(p) => lang::language_for_file(cfg(), p, text),
+            Some(p) => lang::language_for_file(cfg(), p, first_line),
             None => prefs::new_doc_language(),
         };
-        let by_name = path.as_deref().and_then(|p| lang::language_for_path(cfg(), p));
-        let by_text = lang.filter(|l| path.is_some() && by_name.map(|b| &b.name) != Some(&l.name));
         self.setup_editor(&view, lang);
         let name = match &path {
             Some(p) => p
@@ -1908,7 +1910,8 @@ impl App {
             lost,
             ro: false,
             file_ro,
-            lang: by_text.map(|l| l.name.clone()),
+            lang: None,
+            first_line,
             mtime,
         });
         self.apply_udl_at(at);

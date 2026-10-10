@@ -192,13 +192,21 @@ const FIRST_LINES: [(&str, &str); 5] = [
     ("<?", "php"),
 ];
 
-// Buffer::setFileName and FileManager::loadFileData: the first line gives the language when the file name gives normal text.
-pub fn language_for_file<'a>(cfg: &'a Config, path: &Path, text: &[u8]) -> Option<&'a Language> {
+// FileManager::loadFileData: the first line is read only when no UDL and no built-in language match the file name.
+pub fn first_line_language(cfg: &Config, path: &Path, udl: bool, text: &[u8]) -> Option<&'static str> {
+    if udl || language_for_path(cfg, path).is_some_and(|l| l.name != "normal") {
+        return None;
+    }
+    language_from_text(text)
+}
+
+// The language of the file name, else the language that the first line gave when the file was opened.
+pub fn language_for_file<'a>(cfg: &'a Config, path: &Path, first_line: Option<&str>) -> Option<&'a Language> {
     let by_name = language_for_path(cfg, path);
     if by_name.is_some_and(|l| l.name != "normal") {
         return by_name;
     }
-    language_from_text(text)
+    first_line
         .and_then(|n| cfg.languages.iter().find(|l| l.name == n))
         .or(by_name)
 }
@@ -409,14 +417,24 @@ mod tests {
     #[test]
     fn first_line_needs_normal_text_name() {
         let c = load();
-        let lang = |p: &str, t: &[u8]| language_for_file(&c, Path::new(p), t).map(|l| l.name.clone());
-        assert_eq!(lang("run", b"#!/bin/sh\n").as_deref(), Some("bash"));
-        assert_eq!(lang("a.txt", b"<?xml?>").as_deref(), Some("xml"));
-        assert_eq!(lang("a.py", b"#!/bin/sh\n").as_deref(), Some("python"));
-        assert_eq!(lang("node", b"#!/usr/bin/env node\n").as_deref(), Some("javascript.js"));
+        let first = |p: &str, udl: bool, t: &[u8]| first_line_language(&c, Path::new(p), udl, t);
+        assert_eq!(first("run", false, b"#!/bin/sh\n"), Some("bash"));
+        assert_eq!(first("a.txt", false, b"<?xml?>"), Some("xml"));
+        assert_eq!(first("a.py", false, b"#!/bin/sh\n"), None);
+        assert_eq!(first("a.cfg", true, b"<?xml?>"), None);
         for (_, l) in SHEBANGS.iter().chain(FIRST_LINES.iter()) {
             assert!(c.languages.iter().any(|x| x.name == *l), "{l}");
         }
+    }
+
+    #[test]
+    fn file_name_wins_over_first_line() {
+        let c = load();
+        let lang = |p: &str, f: Option<&str>| language_for_file(&c, Path::new(p), f).map(|l| l.name.clone());
+        assert_eq!(lang("notes.txt", Some("php")).as_deref(), Some("php"));
+        assert_eq!(lang("notes.py", Some("php")).as_deref(), Some("python"));
+        assert_eq!(lang("notes.txt", None).as_deref(), Some("normal"));
+        assert_eq!(lang("run", Some("bash")).as_deref(), Some("bash"));
     }
 
     #[test]

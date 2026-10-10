@@ -321,6 +321,12 @@ impl Store {
     }
 }
 
+// A UDL extension matches the file name; then Notepad++ does not read the first line.
+pub(crate) fn matches_file(path: &Path) -> bool {
+    let name = path.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+    with(|s| model::for_file_name(s.langs.iter().map(|e| &e.udl), &name, styler::dark()).is_some())
+}
+
 fn udl_name(t: &Tab) -> Option<String> {
     with(|s| which(s, t).map(|w| s.get(w).0.name.clone()))
 }
