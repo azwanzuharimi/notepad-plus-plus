@@ -702,9 +702,10 @@ impl App {
                 NSWorkspace::sharedWorkspace().openURL(&file_url(&path));
             }
             FIND_IN_FILES => {
-                let u = self.fif_ui();
-                u.dir.setStringValue(&ns(&path.to_string_lossy()));
-                self.show_panel(&u.form, &u.c.find, &u.c.find);
+                self.find_ui()
+                    .dir
+                    .setStringValue(&ns(&path.to_string_lossy()));
+                self.open_find_tab(crate::find_dlg::Tab::Files);
             }
             FINDER_HERE if dir && path.exists() => {
                 NSWorkspace::sharedWorkspace().openURL(&file_url(&path));

@@ -16,6 +16,7 @@ mod encoding;
 mod filebrowser;
 mod fileops;
 mod filestatus;
+mod find_dlg;
 mod finder;
 mod funclist;
 mod incsearch;
@@ -57,7 +58,6 @@ use objc2_app_kit::{
     NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
-use panel::{Controls, Form};
 use search::{FifArgs, FifOut, Line, Next, Wrap};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::ffi::c_void;
@@ -72,21 +72,6 @@ static FIF_DONE: Mutex<Option<(FifArgs, Result<FifOut, String>)>> = Mutex::new(N
 
 fn ns(s: &str) -> Retained<NSString> {
     NSString::from_str(s)
-}
-
-struct FindUi {
-    form: Form,
-    c: Controls,
-    prev: Retained<NSButton>,
-}
-
-struct FifUi {
-    form: Form,
-    c: Controls,
-    filters: Retained<NSTextField>,
-    dir: Retained<NSTextField>,
-    sub: Retained<NSButton>,
-    hidden: Retained<NSButton>,
 }
 
 fn cfg() -> &'static config::Config {
@@ -127,8 +112,6 @@ struct Ivars {
     pending_hit: Cell<(isize, isize)>,
     fif_running: Cell<bool>,
     replacing: Cell<bool>,
-    find_ui: OnceCell<FindUi>,
-    fif_ui: OnceCell<FifUi>,
     status: OnceCell<Vec<Retained<NSTextField>>>,
     view: Cell<view::Opts>,
     begin_select: Cell<Option<(isize, bool)>>,
@@ -262,23 +245,18 @@ define_class!(
             let hit = self.ivars().result_lines.borrow().get(line as usize).and_then(|l| Some((l.hit.clone()?, l.marks.clone())));
             let Some(((path, ranges), marks)) = hit else { return };
             let k = marks.iter().position(|&(s, e)| s <= at && at <= e).unwrap_or(0);
-            self.open_path(&path);
+            let untitled = |t: &Tab| t.path.is_none() && Path::new(&t.name) == path;
+            let new = self.ivars().tabs.borrow().iter().find(|t| untitled(t)).map(|t| t.item.clone());
+            match new {
+                Some(item) => self.tab_view().selectTabViewItem(Some(&item)),
+                None => self.open_path(&path),
+            }
             let tab = self.current().and_then(|i| self.tab(i));
-            if let Some(t) = tab.filter(|t| t.path.as_deref().is_some_and(|p| fileops::same_file(p, &path))) {
+            if let Some(t) = tab.filter(|t| untitled(t) || t.path.as_deref().is_some_and(|p| fileops::same_file(p, &path))) {
                 sci::select(&t.view, ranges[k]);
                 self.ivars().window.get().unwrap().makeKeyAndOrderFront(None);
                 self.focus();
             }
-        }
-
-        #[unsafe(method(showFind:))]
-        fn show_find(&self, _s: Option<&AnyObject>) {
-            self.open_find(false);
-        }
-
-        #[unsafe(method(showReplace:))]
-        fn show_replace(&self, _s: Option<&AnyObject>) {
-            self.open_find(true);
         }
 
         #[unsafe(method(findNext:))]
@@ -291,40 +269,6 @@ define_class!(
             self.find(true);
         }
 
-        #[unsafe(method(count:))]
-        fn count(&self, _s: Option<&AnyObject>) {
-            let (c, o) = (&self.find_ui().c, self.find_ui().c.opts());
-            let Some(v) = self.editor() else { return };
-            let doc = sci::doc(&v);
-            let start = if o.wrap { 0 } else { sci::selection(&v).0 };
-            c.set_status(&match search::process(&doc, &o, false, false, (start, doc.len())) {
-                Ok(m) => search::count_status(m.len(), &o),
-                Err(e) => e,
-            });
-        }
-
-        #[unsafe(method(replaceAll:))]
-        fn replace_all(&self, _s: Option<&AnyObject>) {
-            let (c, o) = (&self.find_ui().c, self.find_ui().c.opts());
-            let Some(v) = self.editor() else { return };
-            let doc = sci::doc(&v);
-            let start = if o.wrap { 0 } else { sci::selection(&v).0 };
-            c.set_status(&match search::replace_all(&doc, &o, (start, doc.len())) {
-                Ok(n) => search::replace_all_status(n, &o),
-                Err(e) => e,
-            });
-        }
-
-        #[unsafe(method(replace:))]
-        fn replace(&self, _s: Option<&AnyObject>) {
-            let (c, o) = (&self.find_ui().c, self.find_ui().c.opts());
-            let Some(v) = self.editor() else { return };
-            if o.find.is_empty() {
-                return;
-            }
-            c.set_status(&self.replace_once(&v, &o).unwrap_or_else(|e| e));
-        }
-
         #[unsafe(method(closePanel:))]
         fn close_panel(&self, s: Option<&AnyObject>) {
             if let Some(s) = s {
@@ -333,51 +277,6 @@ define_class!(
                     w.orderOut(None);
                 }
             }
-        }
-
-        #[unsafe(method(searchModeChanged:))]
-        fn search_mode_changed(&self, _s: Option<&AnyObject>) {
-            if let Some(u) = self.ivars().find_ui.get() {
-                u.c.mode_changed();
-                u.prev.setEnabled(!panel::on(&u.c.modes[2]));
-            }
-            if let Some(u) = self.ivars().fif_ui.get() {
-                u.c.mode_changed();
-            }
-        }
-
-        #[unsafe(method(showFindInFiles:))]
-        fn show_find_in_files(&self, _s: Option<&AnyObject>) {
-            let u = self.fif_ui();
-            if panel::text(&u.dir).is_empty() {
-                let dir = self.current().and_then(|i| self.tab(i)?.path?.parent().map(Path::to_path_buf));
-                if let Some(d) = dir {
-                    u.dir.setStringValue(&ns(&d.to_string_lossy()));
-                }
-            }
-            self.show_panel(&u.form, &u.c.find, &u.c.find);
-        }
-
-        #[unsafe(method(browseDir:))]
-        fn browse_dir(&self, _s: Option<&AnyObject>) {
-            let p = NSOpenPanel::openPanel(self.mtm());
-            p.setCanChooseDirectories(true);
-            p.setCanChooseFiles(false);
-            if p.runModal() == NSModalResponseOK {
-                if let Some(path) = p.URL().and_then(|u| u.path()) {
-                    self.fif_ui().dir.setStringValue(&path);
-                }
-            }
-        }
-
-        #[unsafe(method(findAll:))]
-        fn find_all(&self, _s: Option<&AnyObject>) {
-            self.start_fif(false);
-        }
-
-        #[unsafe(method(replaceInFiles:))]
-        fn replace_in_files(&self, _s: Option<&AnyObject>) {
-            self.start_fif(true);
         }
 
         #[unsafe(method(fifDone:))]
@@ -389,7 +288,7 @@ define_class!(
                 self.ivars().replacing.set(false);
                 self.set_tabs_read_only(false);
             }
-            let c = &self.fif_ui().c;
+            let c = self.find_ui();
             match r {
                 Err(e) => c.set_status(&e),
                 Ok(mut out) if replace => {
@@ -971,6 +870,128 @@ define_class!(
         }
     }
 
+    // Find, Replace, Find in Files, Find in Projects and Mark: one dialog with tabs (find_dlg.rs).
+    impl App {
+        #[unsafe(method(showFind:))]
+        fn show_find(&self, _s: Option<&AnyObject>) {
+            self.open_find_tab(find_dlg::Tab::Find);
+        }
+
+        #[unsafe(method(showReplace:))]
+        fn show_replace(&self, _s: Option<&AnyObject>) {
+            self.open_find_tab(find_dlg::Tab::Replace);
+        }
+
+        #[unsafe(method(showFindInFiles:))]
+        fn show_find_in_files(&self, _s: Option<&AnyObject>) {
+            self.open_find_tab(find_dlg::Tab::Files);
+        }
+
+        #[unsafe(method(findTab:))]
+        fn find_tab(&self, _s: Option<&AnyObject>) {
+            self.find_tab_changed();
+        }
+
+        #[unsafe(method(findTwoButtons:))]
+        fn find_two_buttons_action(&self, _s: Option<&AnyObject>) {
+            self.find_two_buttons();
+        }
+
+        #[unsafe(method(dlgFindNext:))]
+        fn dlg_find_next(&self, _s: Option<&AnyObject>) {
+            self.dlg_find(None, macros::IDOK);
+        }
+
+        #[unsafe(method(dlgFindUp:))]
+        fn dlg_find_up(&self, _s: Option<&AnyObject>) {
+            self.dlg_find(Some(true), macros::IDC_FINDPREV);
+        }
+
+        #[unsafe(method(dlgFindDown:))]
+        fn dlg_find_down(&self, _s: Option<&AnyObject>) {
+            self.dlg_find(Some(false), macros::IDC_FINDNEXT);
+        }
+
+        #[unsafe(method(count:))]
+        fn count(&self, _s: Option<&AnyObject>) {
+            self.dlg_count();
+        }
+
+        #[unsafe(method(replace:))]
+        fn replace(&self, _s: Option<&AnyObject>) {
+            self.dlg_replace();
+        }
+
+        #[unsafe(method(replaceAll:))]
+        fn replace_all(&self, _s: Option<&AnyObject>) {
+            self.dlg_replace_all();
+        }
+
+        #[unsafe(method(findAllInCurrent:))]
+        fn find_all_in_current(&self, _s: Option<&AnyObject>) {
+            self.dlg_find_all(false);
+        }
+
+        #[unsafe(method(findAllInOpened:))]
+        fn find_all_in_opened(&self, _s: Option<&AnyObject>) {
+            self.dlg_find_all(true);
+        }
+
+        #[unsafe(method(replaceAllInOpened:))]
+        fn replace_all_in_opened(&self, _s: Option<&AnyObject>) {
+            self.dlg_replace_all_opened();
+        }
+
+        #[unsafe(method(searchModeChanged:))]
+        fn search_mode_changed(&self, _s: Option<&AnyObject>) {
+            self.find_ui().refresh();
+        }
+
+        #[unsafe(method(findTransparency:))]
+        fn find_transparency(&self, s: Option<&AnyObject>) {
+            self.find_ui().transparency_changed(s);
+        }
+
+        #[unsafe(method(findDlgKey:))]
+        fn find_dlg_key(&self, n: &NSNotification) {
+            let key = n.name().isEqualToString(unsafe { objc2_app_kit::NSWindowDidBecomeKeyNotification });
+            self.find_ui().apply_transparency(key);
+        }
+
+        #[unsafe(method(browseDir:))]
+        fn browse_dir(&self, _s: Option<&AnyObject>) {
+            let p = NSOpenPanel::openPanel(self.mtm());
+            p.setCanChooseDirectories(true);
+            p.setCanChooseFiles(false);
+            if p.runModal() == NSModalResponseOK {
+                if let Some(path) = p.URL().and_then(|u| u.path()) {
+                    self.find_ui().dir.setStringValue(&path);
+                }
+            }
+        }
+
+        #[unsafe(method(setDirFromDoc:))]
+        fn set_dir_from_doc_action(&self, _s: Option<&AnyObject>) {
+            self.set_dir_from_doc();
+        }
+
+        #[unsafe(method(findAll:))]
+        fn find_all(&self, _s: Option<&AnyObject>) {
+            match self.find_ui().tab() {
+                find_dlg::Tab::Projects => self.projects_search(false),
+                _ => self.start_fif(false),
+            }
+        }
+
+        #[unsafe(method(replaceInFiles:))]
+        fn replace_in_files(&self, _s: Option<&AnyObject>) {
+            match self.find_ui().tab() {
+                find_dlg::Tab::Projects => self.projects_search(true),
+                _ => self.start_fif(true),
+            }
+        }
+    }
+
     impl App {
         #[unsafe(method(showMark:))]
         fn show_mark_action(&self, _s: Option<&AnyObject>) {
@@ -990,11 +1011,6 @@ define_class!(
         #[unsafe(method(copyMarkedText:))]
         fn copy_marked_text(&self, _s: Option<&AnyObject>) {
             self.mark_cmd(mark::COPY_FIND_MARK);
-        }
-
-        #[unsafe(method(markModeChanged:))]
-        fn mark_mode_changed_action(&self, _s: Option<&AnyObject>) {
-            self.mark_mode_changed();
         }
 
         #[unsafe(method(markCmd:))]
@@ -1520,78 +1536,12 @@ impl App {
         self.find_fill_text(&*self.editor()?)
     }
 
-    fn show_panel(&self, form: &Form, find: &NSTextField, focus: &NSTextField) {
-        if let Some(s) = self.selected_line() {
-            find.setStringValue(&ns(&s));
-        }
-        form.panel.makeKeyAndOrderFront(None);
-        form.panel.makeFirstResponder(Some(focus));
-        unsafe { focus.selectText(None) };
-    }
-
-    fn find_ui(&self) -> &FindUi {
-        self.ivars().find_ui.get_or_init(|| {
-            let t: &AnyObject = self;
-            let f = Form::new(self.mtm(), "Find", 560., 310.);
-            let (c, _) = panel::controls(&f, t, 0., &[]);
-            let (x, w) = (436., 110.);
-            let next = f.button("Find Next", x, 14., w, t, sel!(findNext:));
-            next.setKeyEquivalent(&ns("\r"));
-            let prev = f.button("Find Previous", x, 46., w, t, sel!(findPrevious:));
-            f.button("Count", x, 78., w, t, sel!(count:));
-            f.button("Replace", x, 110., w, t, sel!(replace:));
-            f.button("Replace All", x, 142., w, t, sel!(replaceAll:));
-            f.button("Close", x, 174., w, t, sel!(closePanel:))
-                .setKeyEquivalent(&ns("\u{1b}"));
-            FindUi { form: f, c, prev }
-        })
-    }
-
-    fn fif_ui(&self) -> &FifUi {
-        self.ivars().fif_ui.get_or_init(|| {
-            let t: &AnyObject = self;
-            let f = Form::new(self.mtm(), "Find in Files", 600., 390.);
-            let (c, b) = panel::controls(&f, t, 60., &["In all sub-folders", "In hidden folders"]);
-            f.label("Filters:", 16., 76., 100.);
-            let filters = f.field(120., 76., 300.);
-            filters.setStringValue(&ns("*.*"));
-            f.label("Directory:", 16., 106., 100.);
-            let dir = f.field(120., 106., 300.);
-            f.button("...", 424., 103., 44., t, sel!(browseDir:));
-            panel::set_on(&b[0], true);
-            let (x, w) = (476., 110.);
-            f.button("Find All", x, 14., w, t, sel!(findAll:))
-                .setKeyEquivalent(&ns("\r"));
-            f.button("Replace in Files", x, 46., w, t, sel!(replaceInFiles:));
-            f.button("Close", x, 78., w, t, sel!(closePanel:))
-                .setKeyEquivalent(&ns("\u{1b}"));
-            let [sub, hidden] = [b[0].clone(), b[1].clone()];
-            FifUi {
-                form: f,
-                c,
-                filters,
-                dir,
-                sub,
-                hidden,
-            }
-        })
-    }
-
-    fn open_find(&self, replace: bool) {
-        let u = self.find_ui();
-        self.show_panel(
-            &u.form,
-            &u.c.find,
-            if replace { &u.c.replace } else { &u.c.find },
-        );
-    }
-
     fn find(&self, up: bool) {
-        self.find_with(&self.find_ui().c.opts(), up);
+        self.find_with(&self.find_ui().opts(), up);
     }
 
     fn find_with(&self, o: &search::Opts, up: bool) {
-        let c = &self.find_ui().c;
+        let c = self.find_ui();
         let Some(v) = self.editor() else { return };
         if up && o.regex() {
             return;
@@ -1622,13 +1572,23 @@ impl App {
     }
 
     fn start_fif(&self, replace: bool) {
-        let u = self.fif_ui();
-        let opts = u.c.opts();
+        let u = self.find_ui();
+        u.remember(find_dlg::FILTERS);
+        u.remember(find_dlg::FINDS);
+        if replace {
+            u.remember(find_dlg::REPLACES);
+        }
+        let opts = search::Opts {
+            in_sel: false,
+            backward: false,
+            ..u.opts()
+        };
         let dir = panel::text(&u.dir).trim().to_string();
         let filters = panel::text(&u.filters);
         if self.ivars().fif_running.get() || opts.find.is_empty() || dir.is_empty() {
             return;
         }
+        u.remember(find_dlg::PATHS);
         if replace {
             let f = if filters.trim().is_empty() {
                 "*.*"
@@ -1656,7 +1616,7 @@ impl App {
             replace,
             open: self.open_texts(),
         };
-        u.c.set_status(if replace {
+        u.set_status(if replace {
             "Replace In Files progress..."
         } else {
             "Find In Files progress..."

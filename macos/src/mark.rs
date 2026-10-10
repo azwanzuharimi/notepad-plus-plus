@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::config::Config;
-use crate::panel::{self, Form};
-use crate::search::{self, Doc, Mode, Opts};
+use crate::panel;
+use crate::search::{self, Doc, Opts};
 use crate::search_extras::{word_selection, MARK_BOOKMARK};
-use crate::{item, nested, ns, sci, tagged, tools, App};
+use crate::{item, nested, sci, tagged, tools, App};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{class, msg_send, sel, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSButton, NSEventModifierFlags, NSMenuItem, NSTextField, NSView};
+use objc2::{class, msg_send, sel, MainThreadMarker};
+use objc2_app_kit::{NSEventModifierFlags, NSMenuItem, NSView};
 use objc2_foundation::{NSArray, NSRunLoopCommonModes, NSString};
-use std::cell::{Cell, OnceCell};
+use std::cell::Cell;
 
 // SCE_UNIVERSAL_FOUND_STYLE_SMART and SCE_UNIVERSAL_FOUND_STYLE.
 pub const SMART: usize = 29;
@@ -56,45 +56,7 @@ const ALL: isize = 5;
 const FIND_STYLE: isize = 6;
 pub const COPY_FIND_MARK: isize = COPY + FIND_STYLE;
 
-pub struct MarkUi {
-    form: Form,
-    find: Retained<NSTextField>,
-    bookmark: Retained<NSButton>,
-    purge: Retained<NSButton>,
-    whole: Retained<NSButton>,
-    case: Retained<NSButton>,
-    wrap: Retained<NSButton>,
-    in_sel: Retained<NSButton>,
-    modes: [Retained<NSButton>; 3],
-    dot_nl: Retained<NSButton>,
-    status: Retained<NSTextField>,
-}
-
-impl MarkUi {
-    fn opts(&self) -> Opts {
-        let mode = match self.modes.iter().position(|b| panel::on(b)) {
-            Some(1) => Mode::Extended,
-            Some(2) => Mode::Regex,
-            _ => Mode::Normal,
-        };
-        Opts {
-            find: panel::text(&self.find),
-            whole_word: panel::on(&self.whole),
-            match_case: panel::on(&self.case),
-            wrap: panel::on(&self.wrap),
-            mode,
-            dot_nl: panel::on(&self.dot_nl),
-            ..Default::default()
-        }
-    }
-
-    fn set_status(&self, s: &str) {
-        self.status.setStringValue(&ns(s));
-    }
-}
-
 thread_local! {
-    static UI: OnceCell<&'static MarkUi> = const { OnceCell::new() };
     // Notepad++ _disableSmartHiliteTmp: a jump to a style skips the next smart highlighting.
     static SKIP_SMART: Cell<bool> = const { Cell::new(false) };
 }
@@ -115,30 +77,13 @@ pub fn occurrences(doc: &Doc, text: &str, whole: bool, case: bool) -> Vec<(isize
         .collect()
 }
 
-// Range that Mark All searches (FindReplaceDlg::processAll for ProcessMarkAll).
-pub fn mark_range(sel: (isize, isize), len: isize, wrap: bool, in_sel: bool) -> (isize, isize) {
-    if in_sel {
-        sel
-    } else if wrap {
-        (0, len)
-    } else {
-        (sel.0, len)
-    }
-}
-
-pub fn mark_status(n: usize, o: &Opts, in_sel: bool) -> String {
+pub fn mark_status(n: usize, o: &Opts) -> String {
     let m = if n == 1 {
         "Mark: 1 match".to_string()
     } else {
         format!("Mark: {n} matches")
     };
-    let scope = if in_sel {
-        "in selected text"
-    } else if o.wrap {
-        "in entire file"
-    } else {
-        "from caret to end-of-file"
-    };
+    let scope = search::scope(o);
     let lax = o.wrap && !o.match_case && !o.whole_word;
     if n == 0 && !lax {
         format!("{m} {scope}\n{}", search::NOT_FOUND_REASON)
@@ -343,85 +288,23 @@ fn clear_marks(v: &NSView, in_sel: bool, bookmark: bool) {
 }
 
 impl App {
-    fn mark_ui(&self) -> &'static MarkUi {
-        UI.with(|c| *c.get_or_init(|| Box::leak(Box::new(self.build_mark_ui()))))
-    }
-
-    fn build_mark_ui(&self) -> MarkUi {
-        let t: &AnyObject = self;
-        let mtm = self.mtm();
-        let f = Form::new(mtm, "Mark", 560., 340.);
-        let noop = sel!(markModeChanged:);
-        f.label("Find what:", 16., 16., 100.);
-        let find = f.field(120., 16., 300.);
-        let check = |title: &str, x: f64, top: f64| f.check(title, x, top, 200., t, noop);
-        let bookmark = check("Bookmark line", 16., 56.);
-        let purge = check("Purge for each search", 16., 80.);
-        let whole = check("Match whole word only", 16., 104.);
-        let case = check("Match case", 16., 128.);
-        let wrap = check("Wrap around", 16., 152.);
-        let in_sel = check("In selection", 240., 56.);
-        panel::set_on(&wrap, true);
-        f.label("Search Mode", 16., 184., 200.);
-        let radio = |title: &str, top: f64, w: f64| {
-            let b = unsafe {
-                NSButton::radioButtonWithTitle_target_action(&ns(title), Some(t), Some(noop), mtm)
-            };
-            f.place(&b, 24., top, w, 20.);
-            b
-        };
-        let modes = [
-            radio("Normal", 206., 300.),
-            radio("Extended (\\n, \\r, \\t, \\0, \\x...)", 228., 300.),
-            radio("Regular expression", 250., 170.),
-        ];
-        panel::set_on(&modes[0], true);
-        let dot_nl = f.check(". matches newline", 200., 250., 160., t, noop);
-        dot_nl.setEnabled(false);
-        let status = f.status(16., 284., 520., 40.);
-        let (x, w) = (436., 110.);
-        f.button("Mark All", x, 14., w, t, sel!(markAll:))
-            .setKeyEquivalent(&ns("\r"));
-        f.button("Clear all marks", x, 46., w, t, sel!(clearAllMarks:));
-        f.button("Copy Marked Text", x, 78., w, t, sel!(copyMarkedText:));
-        f.button("Close", x, 110., w, t, sel!(closePanel:))
-            .setKeyEquivalent(&ns("\u{1b}"));
-        MarkUi {
-            form: f,
-            find,
-            bookmark,
-            purge,
-            whole,
-            case,
-            wrap,
-            in_sel,
-            modes,
-            dot_nl,
-            status,
-        }
-    }
-
     pub(crate) fn show_mark(&self) {
-        let u = self.mark_ui();
-        self.show_panel(&u.form, &u.find, &u.find);
-    }
-
-    pub(crate) fn mark_mode_changed(&self) {
-        let u = self.mark_ui();
-        u.dot_nl.setEnabled(panel::on(&u.modes[2]));
+        self.open_find_tab(crate::find_dlg::Tab::Mark);
     }
 
     // FindReplaceDlg IDCMARKALL.
     pub(crate) fn mark_all(&self) {
-        let u = self.mark_ui();
+        let u = self.find_ui();
+        u.remember(crate::find_dlg::FINDS);
         u.set_status("");
         let Some(v) = self.editor() else { return };
-        let o = u.opts();
+        let mut o = u.opts();
         let doc = sci::doc(&v);
         let sel = sci::selection(&v);
-        let in_sel = panel::on(&u.in_sel) && sel.0 != sel.1;
+        o.in_sel &= sel.0 != sel.1;
+        let in_sel = o.in_sel;
         let bookmark = panel::on(&u.bookmark);
-        let range = mark_range(sel, doc.len(), o.wrap, in_sel);
+        let range = search::all_range(&o, sel, doc.len());
         let found = if o.find.is_empty() || range.0 == range.1 {
             Ok(vec![])
         } else {
@@ -443,13 +326,13 @@ impl App {
                         }
                     }
                 }
-                u.set_status(&mark_status(m.len(), &o, in_sel));
+                u.set_status(&mark_status(m.len(), &o));
             }
         }
     }
 
     pub(crate) fn clear_all_marks(&self) {
-        let u = self.mark_ui();
+        let u = self.find_ui();
         if let Some(v) = self.editor() {
             let sel = sci::selection(&v);
             clear_marks(
@@ -644,22 +527,35 @@ mod tests {
 
     #[test]
     fn mark_scope() {
-        assert_eq!(mark_range((3, 5), 10, true, false), (0, 10));
-        assert_eq!(mark_range((3, 5), 10, false, false), (3, 10));
-        assert_eq!(mark_range((3, 5), 10, true, true), (3, 5));
         let o = Opts {
             wrap: true,
             ..Default::default()
         };
-        assert_eq!(mark_status(1, &o, false), "Mark: 1 match in entire file");
-        assert_eq!(mark_status(0, &o, false), "Mark: 0 matches in entire file");
-        assert_eq!(mark_status(2, &o, true), "Mark: 2 matches in selected text");
+        let sel = Opts {
+            in_sel: true,
+            ..o.clone()
+        };
+        let back = Opts {
+            backward: true,
+            ..Default::default()
+        };
+        assert_eq!(search::all_range(&o, (3, 5), 10), (0, 10));
+        assert_eq!(search::all_range(&Opts::default(), (3, 5), 10), (3, 10));
+        assert_eq!(search::all_range(&sel, (3, 5), 10), (3, 5));
+        assert_eq!(search::all_range(&back, (3, 5), 10), (0, 5));
+        assert_eq!(mark_status(1, &o), "Mark: 1 match in entire file");
+        assert_eq!(mark_status(0, &o), "Mark: 0 matches in entire file");
+        assert_eq!(mark_status(2, &sel), "Mark: 2 matches in selected text");
+        assert_eq!(
+            mark_status(3, &back),
+            "Mark: 3 matches from start-of-file to caret"
+        );
         let strict = Opts {
             match_case: true,
             ..Default::default()
         };
         assert_eq!(
-            mark_status(0, &strict, false),
+            mark_status(0, &strict),
             format!(
                 "Mark: 0 matches from caret to end-of-file\n{}",
                 search::NOT_FOUND_REASON

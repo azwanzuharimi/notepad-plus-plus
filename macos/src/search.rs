@@ -199,6 +199,8 @@ pub struct Opts {
     pub wrap: bool,
     pub mode: Mode,
     pub dot_nl: bool,
+    pub in_sel: bool,
+    pub backward: bool,
 }
 
 impl Opts {
@@ -429,11 +431,29 @@ pub fn commafy(n: usize) -> String {
     out
 }
 
-fn scope(o: &Opts) -> &'static str {
-    if o.wrap {
+// FindReplaceDlg::getScopeInfoForStatusBar.
+pub fn scope(o: &Opts) -> &'static str {
+    if o.in_sel {
+        "in selected text"
+    } else if o.wrap {
         "in entire file"
+    } else if o.backward {
+        "from start-of-file to caret"
     } else {
         "from caret to end-of-file"
+    }
+}
+
+// Range of FindReplaceDlg::processAll for Count, Replace All and Mark All.
+pub fn all_range(o: &Opts, sel: (isize, isize), len: isize) -> (isize, isize) {
+    if o.in_sel {
+        sel
+    } else if o.wrap {
+        (0, len)
+    } else if o.backward {
+        (0, sel.1)
+    } else {
+        (sel.0, len)
     }
 }
 
@@ -463,6 +483,14 @@ pub fn replace_all_status(n: usize, o: &Opts) -> String {
         format!("Replace All: {n} occurrences were replaced")
     };
     with_reason(format!("{m} {}", scope(o)), n, o)
+}
+
+pub fn replace_in_opened_status(n: usize) -> String {
+    if n == 1 {
+        "Replace in Opened Files: 1 occurrence was replaced.".into()
+    } else {
+        format!("Replace in Opened Files: {n} occurrences were replaced.")
+    }
 }
 
 pub fn replace_not_found_status(o: &Opts) -> String {
@@ -694,20 +722,26 @@ fn mode_info(o: &Opts) -> String {
 
 pub fn search_header(o: &Opts, hits: usize, files: usize, searched: usize) -> String {
     let name: String = o.find.chars().filter(|&c| c != '\r' && c != '\n').collect();
+    let unit = if o.in_sel { "selection" } else { "file" };
     format!(
-        "Search \"{name}\" ({} {} in {} {} of {} searched) {}",
+        "Search \"{name}\" ({} {} in {} {unit}{} of {} searched) {}",
         commafy(hits),
         if hits == 1 { "hit" } else { "hits" },
         commafy(files),
-        if files == 1 { "file" } else { "files" },
+        if files == 1 { "" } else { "s" },
         commafy(searched),
         mode_info(o)
     )
 }
 
-// Finds matches of one document as result lines (file header first), one line per found line.
-pub fn find_all_lines(doc: &Doc, o: &Opts, path: &Path) -> Result<Vec<Line>, String> {
-    let found = process(doc, o, false, true, (0, doc.len()))?;
+// Finds matches in `range` of one document as result lines (file header first), one line per found line.
+pub fn find_all_lines(
+    doc: &Doc,
+    o: &Opts,
+    path: &Path,
+    range: (isize, isize),
+) -> Result<Vec<Line>, String> {
+    let found = process(doc, o, false, true, range)?;
     if found.is_empty() {
         return Ok(vec![]);
     }
@@ -819,7 +853,7 @@ pub fn find_in_files(a: &FifArgs) -> Result<FifOut, String> {
             continue;
         };
         let Some(doc) = Doc::new(&text) else { continue };
-        let lines = find_all_lines(&doc, &a.opts, f)?;
+        let lines = find_all_lines(&doc, &a.opts, f, (0, doc.len()))?;
         if !lines.is_empty() {
             out.count += lines
                 .iter()
