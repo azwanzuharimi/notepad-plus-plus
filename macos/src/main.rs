@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+mod comment;
 mod config;
 mod edit;
 mod encoding;
 mod fileops;
 mod lang;
+mod language;
 mod panel;
 mod sci;
 mod search;
@@ -71,6 +73,7 @@ struct Tab {
     enc_dirty: bool,
     lost: bool,
     ro: bool,
+    lang: Option<String>,
 }
 
 #[derive(Default)]
@@ -667,6 +670,18 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(setLanguage:))]
+        fn set_language_action(&self, s: &NSMenuItem) {
+            self.set_language(s.tag());
+        }
+
+        #[unsafe(method(comment:))]
+        fn comment_action(&self, s: &NSMenuItem) {
+            self.comment(s.tag());
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -1153,6 +1168,7 @@ impl App {
             enc_dirty: false,
             lost,
             ro: false,
+            lang: None,
         });
         let last = self.ivars().tabs.borrow().len() - 1;
         self.refresh_title(last);
@@ -1174,6 +1190,9 @@ impl App {
         }
         if self.validate_view(item) {
             return true;
+        }
+        if let Some(on) = self.validate_language(item) {
+            return on;
         }
         let tab = self.current().and_then(|i| self.tab(i));
         let checked = match &tab {
@@ -1226,10 +1245,7 @@ impl App {
             return;
         };
         let v = &t.view;
-        let lang = t
-            .path
-            .as_deref()
-            .and_then(|p| lang::language_for_path(cfg(), p));
+        let lang = language::tab_language(&t);
         let (ln, col, pos, sel) = sci::position_info(v);
         let c = |n: isize| search::commafy(n as usize);
         let sel = match sel {
@@ -1294,7 +1310,7 @@ impl App {
         }
         sci::set_save_point(&tab.view);
         if renamed {
-            sci::apply_language(&tab.view, cfg(), lang::language_for_path(cfg(), &path));
+            self.apply_tab_language(i);
         }
         self.refresh_title(i);
         self.update_status();
@@ -1497,6 +1513,7 @@ fn main() {
     submenu(mtm, &bar, "Search", search_extras::search_menu(mtm, t));
     submenu(mtm, &bar, "View", view::view_menu(mtm, t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
+    submenu(mtm, &bar, "Language", language::language_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
     submenu(mtm, &bar, "?", tools::help_menu(mtm, t));
     if let Some(m) = bar.itemAtIndex(0).and_then(|i| i.submenu()) {

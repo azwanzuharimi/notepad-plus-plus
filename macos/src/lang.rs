@@ -132,9 +132,31 @@ pub fn long_name(lang: &str) -> String {
         .map_or(lang.to_string(), |f| f[2].to_string())
 }
 
+// File names that Buffer::setFileName maps to a language when the extension gives normal text.
+const FILE_NAMES: [(&str, &[&str]); 5] = [
+    ("makefile", &["makefile", "GNUmakefile"]),
+    ("cmake", &["CmakeLists.txt"]),
+    ("python", &["SConstruct", "SConscript", "wscript"]),
+    ("ruby", &["Rakefile", "Vagrantfile"]),
+    ("bash", &["crontab", "PKGBUILD", "APKBUILD"]),
+];
+
+// Buffer::setFileName: the text after the last dot of the file name (PathFindExtension), then the file name list.
 pub fn language_for_path<'a>(cfg: &'a Config, path: &Path) -> Option<&'a Language> {
-    let ext = path.extension()?.to_str()?.to_lowercase();
-    cfg.languages.iter().rev().find(|l| l.exts.contains(&ext))
+    let name = path.file_name()?.to_string_lossy();
+    let ext = name
+        .rfind('.')
+        .map(|i| name[i + 1..].to_lowercase())
+        .filter(|e| !e.contains(' '));
+    let by_ext = ext.and_then(|e| cfg.languages.iter().rev().find(|l| l.exts.contains(&e)));
+    if by_ext.is_some_and(|l| l.name != "normal") {
+        return by_ext;
+    }
+    FILE_NAMES
+        .iter()
+        .find(|(_, names)| names.iter().any(|n| n.eq_ignore_ascii_case(&name)))
+        .and_then(|(lang, _)| cfg.languages.iter().find(|l| l.name == *lang))
+        .or(by_ext)
 }
 
 fn words<'a>(cfg: &'a Config, lang: &str, class: &str) -> Option<&'a str> {
@@ -289,6 +311,31 @@ mod tests {
         assert_eq!(lang_of(&c, "x.rs"), "rust");
         assert_eq!(lang_of(&c, "x.unknownext"), "");
         assert_eq!(lang_of(&c, "noext"), "");
+    }
+
+    #[test]
+    fn file_name_mapping() {
+        let c = load();
+        assert_eq!(lang_of(&c, "/src/Makefile"), "makefile");
+        assert_eq!(lang_of(&c, "makefile"), "makefile");
+        assert_eq!(lang_of(&c, "GNUmakefile"), "makefile");
+        assert_eq!(lang_of(&c, "CMakeLists.txt"), "cmake");
+        assert_eq!(lang_of(&c, "SConstruct"), "python");
+        assert_eq!(lang_of(&c, "wscript"), "python");
+        assert_eq!(lang_of(&c, "Rakefile"), "ruby");
+        assert_eq!(lang_of(&c, "Vagrantfile"), "ruby");
+        assert_eq!(lang_of(&c, "crontab"), "bash");
+        assert_eq!(lang_of(&c, "PKGBUILD"), "bash");
+        assert_eq!(lang_of(&c, "APKBUILD"), "bash");
+        assert_eq!(lang_of(&c, "/home/me/.bashrc"), "bash");
+        assert_eq!(lang_of(&c, ".bash_profile"), "bash");
+        assert_eq!(lang_of(&c, ".profile"), "bash");
+        assert_eq!(lang_of(&c, "notes.txt"), "normal");
+        assert_eq!(lang_of(&c, "Dockerfile"), "");
+        assert_eq!(lang_of(&c, "Makefile.am"), "");
+        assert_eq!(lang_of(&c, "x.mk"), "makefile");
+        assert_eq!(lang_of(&c, "a.b c"), "");
+        assert_eq!(lang_of(&c, "file."), "");
     }
 
     #[test]
