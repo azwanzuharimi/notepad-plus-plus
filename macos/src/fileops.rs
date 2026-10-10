@@ -198,7 +198,8 @@ impl App {
         }
         let path = PathBuf::from(p.URL()?.path()?.to_string());
         crate::prefs::used_file(&path);
-        if let Some(other) = self.find_open(&path, Some(i)).and_then(|o| self.tab(o)) {
+        let other = self.find_open(&path, Some(i)).filter(|o| !self.clones_of(i).contains(o));
+        if let Some(other) = other.and_then(|o| self.tab(o)) {
             self.alert("The file is already opened in Notepad++.", "", &["OK"]);
             self.tab_view().selectTabViewItem(Some(&other.item));
             return None;
@@ -208,15 +209,23 @@ impl App {
 
     // Removes the tabs without a question; an empty window gets a new tab.
     pub(crate) fn drop_tabs(&self, items: &[Retained<NSTabViewItem>]) {
+        let active = self.active_view();
         for item in items {
-            self.recent_closed(item);
-            self.backup_closed(item);
+            match self.clone_view(item) {
+                Some((from, to)) => self.backup_to_clone(&from, &to),
+                None => {
+                    self.recent_closed(item);
+                    self.backup_closed(item);
+                }
+            }
             self.ivars()
                 .tabs
                 .borrow_mut()
                 .retain(|t| !std::ptr::eq(&*t.item, &**item));
             self.tab_view().removeTabViewItem(item);
         }
+        self.keep_active(active);
+        self.layout_views();
         if self.ivars().tabs.borrow().is_empty() {
             self.ivars().untitled.set(0);
             self.add_tab(None, crate::Enc::Utf8, b"", false);
@@ -269,8 +278,10 @@ impl App {
     // NppIO.cpp fileSaveAll: one modified current tab saves at once, else a confirmation shows first.
     pub(crate) fn save_all(&self) {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
-        let dirty: Vec<usize> = (0..tabs.len()).filter(|&i| self.dirty(&tabs[i])).collect();
-        let cur = self.current();
+        let dirty: Vec<usize> = (0..tabs.len())
+            .filter(|&i| self.dirty(&tabs[i]) && self.first_copy(i) == i)
+            .collect();
+        let cur = self.current().map(|c| self.first_copy(c));
         if dirty.is_empty() {
             return;
         }
@@ -290,6 +301,9 @@ impl App {
             let Some(i) = self.index_of(&t.item) else {
                 continue;
             };
+            if !self.tab(i).is_some_and(|t| self.dirty(&t)) {
+                continue;
+            }
             if t.path.is_none() {
                 self.tab_view().selectTabViewItem(Some(&t.item));
             }
@@ -349,10 +363,11 @@ impl App {
         if name == t.name {
             return;
         }
+        let clones = self.clones_of(i);
         if tabs
             .iter()
             .enumerate()
-            .any(|(k, o)| k != i && o.name == name)
+            .any(|(k, o)| k != i && !clones.contains(&k) && o.name == name)
         {
             self.alert(
                 "Rename failed",
@@ -386,20 +401,16 @@ impl App {
             .iter()
             .map(|t| !self.dirty(t) || (t.path.is_none() && sci::length(&t.view) == 0))
             .collect();
-        let items: Vec<_> = to_close(kind, active, &unchanged)
+        let r = match kind {
+            Close::Left | Close::Right => self.view_range(self.active_view()),
+            _ => 0..tabs.len(),
+        };
+        let items: Vec<_> = to_close(kind, active - r.start, &unchanged[r.clone()])
             .into_iter()
-            .map(|k| tabs[k].item.clone())
+            .map(|k| tabs[k + r.start].item.clone())
             .collect();
-        for item in &items {
-            let Some(i) = self.index_of(item) else {
-                continue;
-            };
-            if self.tab(i).is_some_and(|t| self.dirty(&t)) {
-                self.tab_view().selectTabViewItem(Some(item));
-            }
-            if !self.confirm_close(i) {
-                return;
-            }
+        if !self.confirm_close_all(&items) {
+            return;
         }
         self.drop_tabs(&items);
         if let Some(t) = tabs
@@ -412,7 +423,7 @@ impl App {
 
     // NppIO.cpp fileDelete: confirm, move the file to the Trash, then close the tab without a question.
     pub(crate) fn move_to_trash(&self) {
-        let Some(t) = self.current().and_then(|i| self.tab(i)) else {
+        let Some((i, t)) = self.current().and_then(|i| Some((i, self.tab(i)?))) else {
             return;
         };
         let Some(path) = t.path.clone() else { return };
@@ -433,7 +444,7 @@ impl App {
             );
             return;
         }
-        self.drop_tabs(&[t.item]);
+        self.drop_tabs(&self.with_clones(i));
     }
 
     pub(crate) fn open_folder(&self, terminal: bool) {

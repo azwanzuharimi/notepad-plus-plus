@@ -64,6 +64,7 @@ pub struct FileInfo {
 pub struct Session {
     pub active: usize,
     pub files: Vec<FileInfo>,
+    pub in_sub_view: usize,
 }
 
 fn num(e: &BytesStart, key: &str, default: i64) -> i64 {
@@ -135,6 +136,7 @@ pub fn parse_session(xml: &str) -> Option<Session> {
     };
     found.then(|| Session {
         active,
+        in_sub_view: sub.len(),
         files: main.into_iter().chain(sub).collect(),
     })
 }
@@ -147,11 +149,19 @@ fn yes_no(b: bool) -> &'static str {
     }
 }
 
-// Parameters.cpp writeSession: all files go to mainView, because this app has one view.
+// Parameters.cpp writeSession: the last `in_sub_view` files go to subView.
 pub fn write_session(s: &Session) -> String {
-    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n    <Session activeView=\"0\">\r\n");
-    out += &format!("        <mainView activeIndex=\"{}\">\r\n", s.active);
-    for f in &s.files {
+    let main = s.files.len().saturating_sub(s.in_sub_view);
+    let (view, index) = match s.active.checked_sub(main) {
+        Some(k) if main < s.files.len() => (1, k),
+        _ => (0, s.active),
+    };
+    let mut out = format!("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n    <Session activeView=\"{view}\">\r\n");
+    out += &format!("        <mainView activeIndex=\"{}\">\r\n", if view == 0 { index } else { 0 });
+    for (k, f) in s.files.iter().enumerate() {
+        if k == main {
+            out += &format!("        </mainView>\r\n        <subView activeIndex=\"{}\">\r\n", if view == 1 { index } else { 0 });
+        }
         out += &format!(
             "            <File firstVisibleLine=\"{}\" xOffset=\"{}\" startPos=\"{}\" endPos=\"{}\" selMode=\"{}\" lang=\"{}\" encoding=\"{}\" userReadOnly=\"{}\" filename=\"{}\" backupFilePath=\"{}\" originalFileLastModifTimestamp=\"{}\" originalFileLastModifTimestampHigh=\"{}\" />\r\n",
             f.first_visible_line,
@@ -168,7 +178,12 @@ pub fn write_session(s: &Session) -> String {
             f.original_timestamp >> 32,
         );
     }
-    out + "        </mainView>\r\n        <subView activeIndex=\"0\" />\r\n    </Session>\r\n</NotepadPlus>\r\n"
+    let end = if main < s.files.len() {
+        "        </subView>\r\n"
+    } else {
+        "        </mainView>\r\n        <subView activeIndex=\"0\" />\r\n"
+    };
+    out + end + "    </Session>\r\n</NotepadPlus>\r\n"
 }
 
 // lastRecentFileList.cpp; `files` holds the newest file first.
@@ -588,6 +603,7 @@ impl App {
             if Some(i) == cur {
                 s.active = s.files.len();
             }
+            s.in_sub_view += usize::from(self.pane_of(i) == crate::views::SUB);
             let v = &t.view;
             let get = |m| sci::send(v, m, 0, 0);
             let b = backup::entry(v);
@@ -663,12 +679,14 @@ impl App {
                 if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
                     t.lang = Some(name);
                 }
+                self.sync_clones(i);
                 self.apply_tab_language(i);
             }
             if f.read_only {
                 if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
                     t.ro = true;
                 }
+                self.sync_clones(i);
             }
             if let Some(t) = self.tab(i) {
                 restore_position(&t.view, f);
@@ -683,6 +701,7 @@ impl App {
         if let Some(item) = active {
             self.tab_view().selectTabViewItem(Some(&item));
         }
+        self.restore_views(s);
     }
 
     // A character set is used again if the file has no BOM.
@@ -909,7 +928,7 @@ impl App {
 }
 
 // ScintillaEditView.cpp restoreCurrentPosPreStep; the wrap post step is not done.
-fn restore_position(v: &objc2_app_kit::NSView, f: &FileInfo) {
+pub(crate) fn restore_position(v: &objc2_app_kit::NSView, f: &FileInfo) {
     let set = |m, w: isize| sci::send(v, m, w as usize, 0);
     set(SCI_SETSELECTIONMODE, f.sel_mode);
     set(SCI_SETANCHOR, f.start_pos);
@@ -961,6 +980,7 @@ mod tests {
                     ..info("new 1")
                 },
             ],
+            ..Session::default()
         };
         let x = write_session(&s);
         assert!(x.contains("filename=\"/w/a.txt\" backupFilePath=\"/u/backup/a.txt@2026-10-10_134501\" originalFileLastModifTimestamp=\"2676915564\" originalFileLastModifTimestampHigh=\"31210027\""));
@@ -995,8 +1015,11 @@ mod tests {
                 },
                 info("/tmp/x.txt"),
             ],
+            in_sub_view: 1,
         };
         let x = write_session(&s);
+        assert!(x.contains("<Session activeView=\"1\">"));
+        assert!(x.contains("<subView activeIndex=\"0\">\r\n            <File firstVisibleLine=\"0\""));
         assert!(x.contains("filename=\"/tmp/a &amp; &quot;b&quot; &lt;c&gt;.py\""));
         assert!(x.contains("userReadOnly=\"yes\""));
         assert_eq!(parse_session(&x), Some(s));
@@ -1023,7 +1046,9 @@ mod tests {
         let s = parse_session(x).unwrap();
         let names: Vec<_> = s.files.iter().map(|f| f.filename.as_str()).collect();
         assert_eq!(names, ["C:\\src\\main.cpp", "D:\\notes.txt", "D:\\b.txt"]);
-        assert_eq!(s.active, 2);
+        assert_eq!((s.active, s.in_sub_view), (2, 2));
+        let back = parse_session(&write_session(&s)).unwrap();
+        assert_eq!((back.active, back.in_sub_view, back.files.len()), (2, 2, 3));
         assert_eq!(
             (
                 s.files[0].first_visible_line,
@@ -1113,8 +1138,8 @@ mod tests {
         std::fs::write(d.join("utf16.xml"), [0xFF, 0xFE, b'<', 0]).unwrap();
         assert!(read_file(&d.join("utf16.xml")).is_err());
         let one = Session {
-            active: 0,
             files: vec![info("/a.txt")],
+            ..Session::default()
         };
         write_file(&path, &write_session(&one), true).unwrap();
         assert!(!d.join("session.xml.inCaseOfCorruption.bak").exists());

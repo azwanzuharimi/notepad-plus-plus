@@ -99,8 +99,10 @@ impl App {
                 .tabs
                 .borrow()
                 .iter()
+                .enumerate()
                 .rev()
-                .map(|t| t.item.clone())
+                .filter(|&(i, _)| self.first_copy(i) == i)
+                .map(|(_, t)| t.item.clone())
                 .collect()
         } else {
             self.tab_view().selectedTabViewItem().into_iter().collect()
@@ -135,6 +137,7 @@ impl App {
         if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
             t.mtime = now;
         }
+        self.sync_clones(i);
         let shown = format!("\"{}\"", path.display());
         match action {
             Action::Unchanged => {}
@@ -158,7 +161,9 @@ impl App {
                 let msg =
                     format!("The file {shown} doesn't exist anymore.\nKeep this file in editor?");
                 if !self.ask_yes_no("Keep non existing file", &msg, false) {
-                    self.drop_tabs(std::slice::from_ref(item));
+                    if let Some(i) = self.tab_at(item) {
+                        self.drop_tabs(&self.with_clones(i));
+                    }
                 }
             }
         }

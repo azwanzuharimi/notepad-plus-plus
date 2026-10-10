@@ -420,6 +420,7 @@ impl App {
             if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
                 t.lang = Some(set);
             }
+            self.sync_clones(i);
             self.apply_tab_language(i);
         }
         true
@@ -447,6 +448,7 @@ impl App {
             t.lang = Some(lang);
         }
         self.apply_tab_language(i);
+        self.refresh_title(i);
         self.update_status();
     }
 

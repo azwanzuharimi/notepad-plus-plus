@@ -463,7 +463,7 @@ impl App {
     // A failed write keeps the change flag, so the next tick and quit_session see it.
     pub(crate) fn write_backups(&self, sync: bool, alerts: bool) {
         let Some(dir) = backup_dir() else { return };
-        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        let tabs = self.doc_tabs_once();
         let states: Vec<TabState> = tabs.iter().map(|t| self.tab_state(t)).collect();
         for (t, step) in tabs.iter().zip(plan(&states)) {
             match step {
@@ -523,6 +523,16 @@ impl App {
         }
     }
 
+    // A clone keeps the backup of a closed tab that shows the same document.
+    pub(crate) fn backup_to_clone(&self, from: &NSView, to: &NSView) {
+        ST.with(|s| {
+            let mut e = s.entries.borrow_mut();
+            if let Some(x) = e.remove(&key(from)) {
+                e.insert(key(to), x);
+            }
+        });
+    }
+
     // NppIO.cpp fileClose: in snapshot mode a closed tab loses its backup.
     pub(crate) fn backup_closed(&self, item: &NSTabViewItem) {
         let view = self
@@ -559,18 +569,12 @@ impl App {
     pub(crate) fn quit_session(&self) -> Option<Session> {
         if !snapshot_on() {
             let session = self.current_session(false);
-            let n = self.ivars().tabs.borrow().len();
-            for i in 0..n {
-                self.tab_view().selectTabViewItemAtIndex(i as isize);
-                if !self.confirm_close(i) {
-                    return None;
-                }
-            }
-            return Some(session);
+            let items: Vec<_> = self.ivars().tabs.borrow().iter().map(|t| t.item.clone()).collect();
+            return self.confirm_close_all(&items).then_some(session);
         }
         self.write_backups(true, false);
         let session = self.current_session(false);
-        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        let tabs = self.doc_tabs_once();
         for t in &tabs {
             if !ask_at_quit(&self.tab_state(t)) {
                 continue;
@@ -633,7 +637,7 @@ impl App {
                 }
                 let (text, lost) = encoding::decode(&b, dec);
                 self.add_tab((!untitled).then(|| p.to_path_buf()), enc, &text, lost);
-                self.ivars().tabs.borrow().len().checked_sub(1)?
+                self.current()?
             }
         };
         let view = {
