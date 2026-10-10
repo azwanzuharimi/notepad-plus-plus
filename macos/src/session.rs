@@ -372,7 +372,7 @@ fn file_menu(mtm: MainThreadMarker) -> Option<Retained<NSMenu>> {
 }
 
 // Parameters.cpp writeSession: an optional copy of the old file, then a write through a temporary file.
-fn write_file(path: &Path, text: &str, backup: bool) -> Result<(), String> {
+pub(crate) fn write_file(path: &Path, text: &str, backup: bool) -> Result<(), String> {
     let err = |e: std::io::Error| format!("{}: {e}", path.display());
     let with = |ext: &str| PathBuf::from(format!("{}{ext}", path.display()));
     std::fs::create_dir_all(path.parent().unwrap_or(path)).map_err(err)?;
@@ -384,7 +384,7 @@ fn write_file(path: &Path, text: &str, backup: bool) -> Result<(), String> {
 }
 
 // None when the file does not exist; an error when it exists but cannot be read as UTF-8.
-fn read_file(path: &Path) -> Result<Option<String>, String> {
+pub(crate) fn read_file(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read_to_string(path) {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),

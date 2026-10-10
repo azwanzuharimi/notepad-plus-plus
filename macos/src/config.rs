@@ -41,7 +41,7 @@ pub fn rgb_to_bgr(hex: &str) -> Option<isize> {
 }
 
 const LANGS: &str = include_str!("../../PowerEditor/src/langs.model.xml");
-const STYLERS: &str = include_str!("../../PowerEditor/src/stylers.model.xml");
+pub const STYLERS: &str = include_str!("../../PowerEditor/src/stylers.model.xml");
 
 pub fn attr(e: &BytesStart, key: &str) -> String {
     e.try_get_attribute(key)
@@ -110,7 +110,13 @@ pub fn load() -> Config {
             _ => {}
         }
     }
-    let mut r = Reader::from_str(STYLERS);
+    load_styles(&mut c, STYLERS);
+    c
+}
+
+// The LexerStyles and GlobalStyles of a stylers.xml or theme file.
+pub fn load_styles(c: &mut Config, xml: &str) {
+    let mut r = Reader::from_str(xml);
     let mut in_global = false;
     let mut in_words = false;
     loop {
@@ -149,7 +155,6 @@ pub fn load() -> Config {
             _ => {}
         }
     }
-    c
 }
 
 // Folder of the user files: config.xml, session.xml and shortcuts.xml.

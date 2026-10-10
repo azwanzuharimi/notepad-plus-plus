@@ -22,6 +22,8 @@ mod search;
 mod search_extras;
 mod shortcuts;
 mod session;
+mod style_dlg;
+mod styler;
 mod tools;
 mod view;
 mod window;
@@ -45,7 +47,7 @@ use search::{FifArgs, FifOut, Line, Next, Wrap};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 const STATUS_H: f64 = 22.;
 // Notepad++ status bar part widths; 0 takes the rest.
@@ -73,8 +75,7 @@ struct FifUi {
 }
 
 fn cfg() -> &'static config::Config {
-    static C: OnceLock<config::Config> = OnceLock::new();
-    C.get_or_init(config::load)
+    styler::cfg()
 }
 
 #[derive(Clone)]
@@ -855,6 +856,18 @@ define_class!(
     }
 
     impl App {
+        #[unsafe(method(styleConfigurator:))]
+        fn style_configurator_action(&self, _s: Option<&AnyObject>) {
+            self.open_style_configurator();
+        }
+
+        #[unsafe(method(importStyleThemes:))]
+        fn import_style_themes_action(&self, _s: Option<&AnyObject>) {
+            self.import_style_themes();
+        }
+    }
+
+    impl App {
         #[unsafe(method(multiSelect:))]
         fn multi_select_action(&self, s: Option<&AnyObject>) {
             self.multi_select(s.map_or(0, |s| unsafe { msg_send![s, tag] }));
@@ -1091,6 +1104,7 @@ define_class!(
                 self.build_window();
             }
             self.start_session();
+            self.style_load_alert();
             for a in std::env::args_os()
                 .skip(1)
                 .filter(|a| !a.to_string_lossy().starts_with('-'))
@@ -1886,6 +1900,7 @@ fn main() {
     submenu(mtm, &bar, "View", view::view_menu(mtm, t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     submenu(mtm, &bar, "Language", language::language_menu(mtm, t));
+    submenu(mtm, &bar, "Settings", style_dlg::settings_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
     macros::menus(mtm, &bar, t);
     bar.addItem(&window::window_menu(mtm, &d));
