@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::config::{app_support_dir, attr};
+use crate::config::attr;
 use crate::docking::{column, content_box, scroll, FOLDERS};
-use crate::session::{read_file, write_file};
+use crate::session::{read_config, replace_element};
 use crate::{ns, tools, App};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{sel, MainThreadOnly};
+use objc2::{sel, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSOutlineView,
     NSTableColumnResizingOptions, NSTableViewColumnAutoresizingStyle, NSView, NSWorkspace,
@@ -13,9 +13,8 @@ use objc2_app_kit::{
 use objc2_foundation::{NSArray, NSIndexSet, NSNumber, NSURL};
 use quick_xml::escape::escape;
 use quick_xml::events::Event;
-use quick_xml::{Reader, Writer};
-use std::cell::RefCell;
-use std::io::Write as _;
+use quick_xml::Reader;
+use std::cell::{OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 
 // fileBrowser_rc.h IDM_FILEBROWSER_*.
@@ -30,6 +29,12 @@ const FINDER_HERE: isize = 3518;
 const TERMINAL_HERE: isize = 3519;
 const COPY_FILE_NAME: isize = 3520;
 const SELECT_FOLDER: &str = "Select a folder to add in Folder as Workspace panel";
+// Port only: one refresh reads at most this number of unfolded folders.
+const MAX_REFRESH: usize = 200;
+
+thread_local! {
+    static APP: OnceCell<Retained<App>> = const { OnceCell::new() };
+}
 
 // The FileBrowser element of config.xml: the selected item and each root with its unfolded folders.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -50,15 +55,12 @@ pub struct Folders {
     outline: Retained<NSOutlineView>,
     nodes: RefCell<Vec<Node>>,
     roots: RefCell<Vec<usize>>,
+    free: RefCell<Vec<usize>>,
 }
 
 // FileBrowser::categorySortFunc: folders first, then names without case (lstrcmpi).
 pub fn sort(v: &mut [(String, bool)]) {
-    v.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    v.sort_by_cached_key(|(name, dir)| (!*dir, name.to_lowercase(), name.clone()));
 }
 
 // FileBrowser::getDirectoryStructure: all files, and the folders that are not hidden; a link to a folder is not followed.
@@ -144,50 +146,12 @@ pub fn saved_xml(s: &Saved) -> String {
     out + "    </FileBrowser>"
 }
 
-// config.xml with a new FileBrowser element; the other elements stay as they are.
-pub fn write_saved(existing: Option<&str>, s: &Saved) -> Result<String, String> {
-    let xml = saved_xml(s);
-    let Some(src) = existing.filter(|s| s.contains("<NotepadPlus")) else {
-        return Ok(format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n    {xml}\r\n</NotepadPlus>\r\n"
-        ));
-    };
-    let mut r = Reader::from_str(src);
-    let mut w = Writer::new(Vec::new());
-    let (mut skip, mut depth, mut done) = (false, 0, false);
-    loop {
-        let ev = r.read_event().map_err(|e| e.to_string())?;
-        if skip {
-            match ev {
-                Event::Start(_) => depth += 1,
-                Event::End(_) if depth == 0 => skip = false,
-                Event::End(_) => depth -= 1,
-                Event::Eof => return Err("config.xml: unexpected end".into()),
-                _ => {}
-            }
-            continue;
-        }
-        match &ev {
-            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == "FileBrowser" => {
-                w.get_mut()
-                    .write_all(xml.as_bytes())
-                    .map_err(|e| e.to_string())?;
-                done = true;
-                skip = matches!(ev, Event::Start(_));
-                depth = 0;
-                continue;
-            }
-            Event::End(e) if e.name().as_ref() == "NotepadPlus" && !done => {
-                w.get_mut()
-                    .write_all(format!("    {xml}\r\n").as_bytes())
-                    .map_err(|e| e.to_string())?;
-            }
-            Event::Eof => break,
-            _ => {}
-        }
-        w.write_event(ev).map_err(|e| e.to_string())?;
+// The FileBrowser element for session::save_config; config.xml keeps its old element when the panel was not launched.
+pub fn patch_config(x: &str) -> Result<String, String> {
+    match APP.with(|a| a.get().and_then(|app| app.folders_saved())) {
+        Some(s) => replace_element(Some(x), "FileBrowser", &saved_xml(&s)),
+        None => Ok(x.to_string()),
     }
-    String::from_utf8(w.into_inner()).map_err(|e| e.to_string())
 }
 
 fn file_url(p: &Path) -> Retained<NSURL> {
@@ -232,6 +196,10 @@ impl App {
             outline,
             nodes: RefCell::new(vec![]),
             roots: RefCell::new(vec![]),
+            free: RefCell::new(vec![]),
+        });
+        APP.with(|a| {
+            let _ = a.set(self.retain());
         });
         b
     }
@@ -244,15 +212,29 @@ impl App {
 
     fn node_add(&self, f: &Folders, path: PathBuf, name: String, dir: bool) -> usize {
         let mut nodes = f.nodes.borrow_mut();
-        let k = nodes.len();
-        nodes.push(Node {
+        let k = f.free.borrow_mut().pop().unwrap_or(nodes.len());
+        let n = Node {
             path,
             name,
             dir,
             kids: None,
             obj: NSNumber::new_isize(k as isize),
-        });
+        };
+        match nodes.get_mut(k) {
+            Some(old) => *old = n,
+            None => nodes.push(n),
+        }
         k
+    }
+
+    // A node that left the tree gives its index, and the indexes of its loaded entries, for reuse.
+    fn node_release(&self, f: &Folders, i: usize) {
+        let mut todo = vec![i];
+        while let Some(k) = todo.pop() {
+            let kids = f.nodes.borrow_mut().get_mut(k).and_then(|n| n.kids.take());
+            todo.extend(kids.unwrap_or_default());
+            f.free.borrow_mut().push(k);
+        }
     }
 
     // Lazy loading: a folder reads its entries the first time the tree asks for them.
@@ -421,8 +403,7 @@ impl App {
         if !first {
             return;
         }
-        let saved = app_support_dir()
-            .and_then(|d| read_file(&d.join("config.xml")).ok().flatten())
+        let saved = read_config()
             .map(|x| parse_saved(&x))
             .unwrap_or_default();
         for (root, expanded) in &saved.roots {
@@ -470,31 +451,35 @@ impl App {
         self.folders_select(&file.to_string_lossy());
     }
 
-    // The folders whose entries are loaded and show in the tree.
-    fn loaded_folders(&self) -> Vec<usize> {
+    // The unfolded folders, at most MAX_REFRESH of them.
+    fn expanded_folders(&self) -> Vec<usize> {
         let Some(f) = self.folders() else {
             return vec![];
         };
         let mut todo = f.roots.borrow().clone();
         let mut out = vec![];
         while let Some(i) = todo.pop() {
-            let kids = f.nodes.borrow().get(i).and_then(|n| n.kids.clone());
-            if let Some(k) = kids {
-                out.push(i);
-                todo.extend(k);
+            let Some(obj) = self.node_obj(i) else { continue };
+            if !unsafe { f.outline.isItemExpanded(Some(&obj)) } {
+                continue;
             }
+            out.push(i);
+            if out.len() == MAX_REFRESH {
+                break;
+            }
+            todo.extend(f.nodes.borrow().get(i).and_then(|n| n.kids.clone()).unwrap_or_default());
         }
         out
     }
 
-    // Port only: in place of the ReadDirectoryChangesW watcher, the loaded folders read their entries again when the app becomes active.
+    // Port only: in place of the ReadDirectoryChangesW watcher, the unfolded folders read their entries again when the app becomes active.
     pub(crate) fn folders_refresh(&self) {
         let Some(f) = self.folders() else { return };
         if !self.panel_visible(FOLDERS) {
             return;
         }
         let selected = f.outline.itemAtRow(f.outline.selectedRow());
-        for i in self.loaded_folders() {
+        for i in self.expanded_folders() {
             let Some(path) = self.node_info(i).map(|n| n.0) else {
                 continue;
             };
@@ -518,6 +503,9 @@ impl App {
                         .unwrap_or_else(|| self.node_add(f, path.join(&name), name, dir))
                 })
                 .collect();
+            for o in old.iter().filter(|o| !kids.contains(&o.0)) {
+                self.node_release(f, o.0);
+            }
             if let Some(n) = f.nodes.borrow_mut().get_mut(i) {
                 n.kids = Some(kids);
             }
@@ -534,12 +522,9 @@ impl App {
         }
     }
 
-    // Notepad_plus::saveFileBrowserParam at quit, when the panel was launched.
-    pub(crate) fn folders_save(&self) {
-        let Some(f) = self.folders() else { return };
-        let Some(path) = app_support_dir().map(|d| d.join("config.xml")) else {
-            return;
-        };
+    // Notepad_plus::saveFileBrowserParam: the state to save, when the panel was launched.
+    fn folders_saved(&self) -> Option<Saved> {
+        let f = self.folders()?;
         let selected = f.outline.selectedRow();
         let selected = (selected >= 0)
             .then(|| self.node_index(f.outline.itemAtRow(selected).as_deref()))
@@ -579,11 +564,7 @@ impl App {
                 .roots
                 .push((root.0.to_string_lossy().into_owned(), expanded));
         }
-        if let Ok(old) = read_file(&path) {
-            if let Ok(x) = write_saved(old.as_deref(), &saved) {
-                let _ = write_file(&path, &x, false);
-            }
-        }
+        Some(saved)
     }
 
     // FileBrowser NM_DBLCLK: a file opens; a folder folds or unfolds.
@@ -697,6 +678,7 @@ impl App {
             REMOVE_ALL => {
                 f.roots.borrow_mut().clear();
                 f.nodes.borrow_mut().clear();
+                f.free.borrow_mut().clear();
                 f.outline.reloadData();
                 return;
             }
@@ -707,8 +689,11 @@ impl App {
         };
         match cmd {
             REMOVE_ROOT => {
-                f.roots.borrow_mut().retain(|&r| r != i);
-                f.outline.reloadData();
+                if f.roots.borrow().contains(&i) {
+                    f.roots.borrow_mut().retain(|&r| r != i);
+                    f.outline.reloadData();
+                    self.node_release(f, i);
+                }
             }
             COPY_PATH => tools::to_clipboard(&path.to_string_lossy()),
             COPY_FILE_NAME => tools::to_clipboard(&name),
@@ -817,6 +802,7 @@ mod tests {
             ],
         };
         let config = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n    <History nbMaxFile=\"10\" />\r\n    <FileBrowser latestSelectedItem=\"/old\">\r\n        <root foldername=\"/old\" />\r\n    </FileBrowser>\r\n    <GUIConfigs />\r\n</NotepadPlus>\r\n";
+        let write_saved = |src: Option<&str>, s: &Saved| replace_element(src, "FileBrowser", &saved_xml(s));
         let out = write_saved(Some(config), &s).unwrap();
         assert_eq!(parse_saved(&out), s);
         assert!(out.contains("<History nbMaxFile=\"10\" />"));

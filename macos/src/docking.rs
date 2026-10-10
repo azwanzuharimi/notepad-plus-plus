@@ -6,7 +6,7 @@ use objc2::runtime::{AnyObject, NSObject, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSApplication, NSApplicationDidBecomeActiveNotification,
-    NSApplicationWillTerminateNotification, NSAutoresizingMaskOptions, NSButton,
+NSAutoresizingMaskOptions, NSButton,
     NSControlStateValueOff, NSControlStateValueOn, NSImage, NSImageCell, NSMenu, NSMenuDelegate,
     NSMenuItem, NSOutlineView, NSOutlineViewDataSource, NSScrollView, NSSearchField,
     NSSegmentDistribution, NSSegmentedControl, NSSplitView, NSSplitViewDividerStyle,
@@ -68,7 +68,7 @@ pub struct Dock {
     widths: Cell<[f64; 2]>,
     contents: RefCell<[Option<Retained<NSView>>; 6]>,
     pub(crate) target: Retained<PanelTarget>,
-    ticking: Cell<bool>,
+    timer: RefCell<Option<Retained<NSTimer>>>,
     docs: Retained<NSTableView>,
     funcs: Retained<NSOutlineView>,
     search: Retained<NSSearchField>,
@@ -105,11 +105,6 @@ define_class!(
         #[unsafe(method(appActive:))]
         fn app_active(&self, _n: &NSNotification) {
             self.ivars().folders_refresh();
-        }
-
-        #[unsafe(method(appWillQuit:))]
-        fn app_will_quit(&self, _n: &NSNotification) {
-            self.ivars().folders_save();
         }
 
         #[unsafe(method(clipInsert:))]
@@ -247,6 +242,14 @@ pub(crate) fn column(mtm: MainThreadMarker, id: &str, title: &str, w: f64) -> Re
 }
 
 // The view of one panel, which the docking area sizes.
+// Replaces the selection with the text as one undo step; the text can hold a NUL character.
+pub(crate) fn insert_text(v: &NSView, text: &str) {
+    sci::send(v, SCI_BEGINUNDOACTION, 0, 0);
+    sci::send(v, SCI_REPLACESEL, 0, c"".as_ptr() as isize);
+    sci::send(v, SCI_ADDTEXT, text.len(), text.as_ptr() as isize);
+    sci::send(v, SCI_ENDUNDOACTION, 0, 0);
+}
+
 pub(crate) fn content_box(mtm: MainThreadMarker) -> Retained<NSView> {
     let b = NSView::initWithFrame(NSView::alloc(mtm), frame(0., 0., WIDTH, 400.));
     b.setAutoresizingMask(fill());
@@ -405,12 +408,6 @@ impl App {
                 Some(NSApplicationDidBecomeActiveNotification),
                 None,
             );
-            nc.addObserver_selector_name_object(
-                &target,
-                sel!(appWillQuit:),
-                Some(NSApplicationWillTerminateNotification),
-                None,
-            );
         }
         let _ = self.ivars().dock.set(Dock {
             outer: outer.clone(),
@@ -418,7 +415,7 @@ impl App {
             widths: Cell::new([WIDTH, WIDTH]),
             contents: RefCell::new([Some(left), Some(right), None, None, None, None]),
             target,
-            ticking: Cell::new(false),
+            timer: RefCell::new(None),
             docs,
             funcs,
             search,
@@ -521,17 +518,22 @@ impl App {
         if let Some(c) = &d.contents.borrow()[id as usize] {
             c.setHidden(true);
         }
-        let next = s.open.borrow().get(k.saturating_sub(1)).copied();
-        let Some(next) = next else {
-            self.show_side(side, false);
-            self.focus();
-            return;
-        };
-        if s.active.get() == id {
-            s.active.set(next);
+        if id == DOC_MAP {
+            self.doc_map_release();
         }
-        self.layout_side(side);
-        self.panel_refresh(s.active.get());
+        let next = s.open.borrow().get(k.saturating_sub(1)).copied();
+        match next {
+            None => self.show_side(side, false),
+            Some(next) => {
+                if s.active.get() == id {
+                    s.active.set(next);
+                }
+                self.layout_side(side);
+                self.panel_refresh(s.active.get());
+            }
+        }
+        self.panels_timer();
+        self.focus();
     }
 
     fn panel_content(&self, id: isize) -> Option<Retained<NSView>> {
@@ -546,17 +548,6 @@ impl App {
             CHARS => self.chars_build(),
             _ => return None,
         };
-        if matches!(id, DOC_MAP | CLIPBOARD) && !d.ticking.replace(true) {
-            unsafe {
-                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                    0.5,
-                    &d.target,
-                    sel!(panelTick:),
-                    None,
-                    true,
-                )
-            };
-        }
         d.contents.borrow_mut()[id as usize] = Some(c.clone());
         Some(c)
     }
@@ -598,6 +589,29 @@ impl App {
         }
         s.title.setStringValue(&ns(PANELS.get(active as usize).map_or("", |p| p.0)));
         s.close.setTag(active);
+        self.panels_timer();
+    }
+
+    // The timer of the Document Map and the Clipboard History runs only while one of them shows.
+    fn panels_timer(&self) {
+        let Some(d) = self.dock_ui() else { return };
+        let need = self.panel_shown(DOC_MAP) || self.panel_shown(CLIPBOARD);
+        let mut t = d.timer.borrow_mut();
+        if need && t.is_none() {
+            *t = Some(unsafe {
+                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                    0.5,
+                    &d.target,
+                    sel!(panelTick:),
+                    None,
+                    true,
+                )
+            });
+        } else if !need {
+            if let Some(t) = t.take() {
+                t.invalidate();
+            }
+        }
     }
 
     // A click on a tab of the tab strip makes its panel the active one.
@@ -653,7 +667,9 @@ impl App {
         if !NSApplication::sharedApplication(self.mtm()).isActive() {
             return;
         }
-        self.clips_poll();
+        if self.panel_shown(CLIPBOARD) {
+            self.clips_poll();
+        }
         if self.panel_shown(DOC_MAP) {
             self.doc_map_scroll();
         }
@@ -927,7 +943,11 @@ impl App {
     }
 }
 
+const SCI_ADDTEXT: u32 = 2001;
 const SCI_GOTOPOS: u32 = 2025;
+const SCI_BEGINUNDOACTION: u32 = 2078;
+const SCI_ENDUNDOACTION: u32 = 2079;
+const SCI_REPLACESEL: u32 = 2170;
 const SCI_GETFIRSTVISIBLELINE: u32 = 2152;
 const SCI_LINESCROLL: u32 = 2168;
 const SCI_DOCLINEFROMVISIBLE: u32 = 2221;
@@ -969,3 +989,4 @@ mod tests {
         assert_eq!(center_scroll(5, 50, 80, 40), -55);
     }
 }
+

@@ -2,10 +2,11 @@
 use crate::docking::{content_box, fill, frame, DOC_MAP};
 use crate::{sci, App};
 use objc2::rc::Retained;
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSEvent, NSView};
 use objc2_foundation::NSRect;
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 
 const SCI_GOTOPOS: u32 = 2025;
 const SCI_POSITIONFROMPOINT: u32 = 2022;
@@ -126,6 +127,37 @@ impl ViewZone {
     }
 }
 
+thread_local! {
+    static NO_FOCUS: OnceCell<Option<&'static AnyClass>> = const { OnceCell::new() };
+}
+
+extern "C-unwind" fn refuse(_this: &AnyObject, _cmd: Sel) -> Bool {
+    Bool::NO
+}
+
+// The map never takes the keyboard: its Scintilla content view gets a subclass that refuses first responder.
+fn refuse_focus(v: &NSView) {
+    let content = sci::content(v);
+    let cls = NO_FOCUS.with(|c| {
+        *c.get_or_init(|| {
+            let name = c"NppDocMapContentView";
+            let Some(mut b) = ClassBuilder::new(name, content.class()) else {
+                return AnyClass::get(name);
+            };
+            unsafe {
+                b.add_method(sel!(acceptsFirstResponder), refuse as extern "C-unwind" fn(_, _) -> _);
+                b.add_method(sel!(becomeFirstResponder), refuse as extern "C-unwind" fn(_, _) -> _);
+                b.add_method(sel!(canBecomeKeyView), refuse as extern "C-unwind" fn(_, _) -> _);
+            }
+            Some(b.register())
+        })
+    });
+    if let Some(cls) = cls {
+        let obj: &AnyObject = &content;
+        unsafe { AnyObject::set_class(obj, cls) };
+    }
+}
+
 fn contracted(v: &NSView) -> Vec<isize> {
     let mut out = vec![];
     let mut line = 0;
@@ -172,6 +204,7 @@ impl App {
         for m in 0..5 {
             sci::send(&view, SCI_SETMARGINWIDTHN, m, 0);
         }
+        refuse_focus(&view);
         let zone = ViewZone::new(mtm, self.retain());
         zone.setFrame(b.bounds());
         zone.setAutoresizingMask(fill());
@@ -200,6 +233,13 @@ impl App {
         copy_styles(&v, &m.view);
         m.wrap.set(None);
         self.doc_map_scroll();
+    }
+
+    // A closed map keeps no document alive; it shows an empty one until it opens again.
+    pub(crate) fn doc_map_release(&self) {
+        if let Some(m) = self.doc_map() {
+            sci::send(&m.view, SCI_SETDOCPOINTER, 0, 0);
+        }
     }
 
     // DocumentMap::wrapMap: a wrapped editor gives a map that is narrower by the zoom ratio, so that the lines wrap the same.

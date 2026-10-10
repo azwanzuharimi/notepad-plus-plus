@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::docking::{column, content_box, scroll};
-use crate::{ns, sci, App};
+use crate::docking::{column, content_box, insert_text, scroll};
+use crate::{ns, App};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{sel, MainThreadOnly};
@@ -10,32 +10,39 @@ use objc2_app_kit::{
 };
 use std::cell::{Cell, RefCell};
 
-const SCI_REPLACESEL: u32 = 2170;
-const SCI_ADDTEXT: u32 = 2001;
 // Port only: Notepad++ keeps every item.
 const MAX_ITEMS: usize = 100;
 // clipboardHistoryPanel.cpp MAX_DISPLAY_LENGTH, in bytes of UTF-16 with the end null.
 const MAX_DISPLAY: usize = 64;
+// Port only: a text longer than 1 Mi UTF-16 units is not kept; Notepad++ keeps any size.
+const MAX_TEXT: usize = 1 << 20;
+
+// A text of the history and the start of it that the list shows.
+pub struct Clip {
+    pub text: String,
+    pub shown: String,
+}
 
 pub struct Clips {
     table: Retained<NSTableView>,
-    items: RefCell<Vec<String>>,
+    items: RefCell<Vec<Clip>>,
     seen: Cell<isize>,
 }
 
 // ClipboardHistoryPanel::addToClipboadHistory: a new text goes to the top; a text in the list moves to the top.
-pub fn add(items: &mut Vec<String>, s: &str, max: usize) {
-    if items.first().is_some_and(|f| f == s) {
+pub fn add(items: &mut Vec<Clip>, s: String, max: usize) {
+    if items.first().is_some_and(|f| f.text == s) {
         return;
     }
-    items.retain(|x| x != s);
-    items.insert(0, s.to_string());
+    items.retain(|x| x.text != s);
+    let shown = display(&s);
+    items.insert(0, Clip { text: s, shown });
     items.truncate(max);
 }
 
 // StringArray: a long text shows its start and "..."; DT_SINGLELINE draws no line breaks.
 pub fn display(s: &str) -> String {
-    let units: Vec<u16> = s.encode_utf16().collect();
+    let units: Vec<u16> = s.encode_utf16().take(MAX_DISPLAY / 2).collect();
     let shown = if (units.len() + 1) * 2 <= MAX_DISPLAY {
         s.to_string()
     } else {
@@ -86,10 +93,11 @@ impl App {
         }
         let text = pb
             .stringForType(unsafe { NSPasteboardTypeString })
+            .filter(|s| s.length() <= MAX_TEXT)
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty());
         if let Some(s) = text {
-            add(&mut c.items.borrow_mut(), &s, MAX_ITEMS);
+            add(&mut c.items.borrow_mut(), s, MAX_ITEMS);
             c.table.reloadData();
         }
     }
@@ -103,7 +111,7 @@ impl App {
     pub(crate) fn clips_text(&self, row: isize) -> Option<String> {
         let c = self.dock_ui()?.clips.get()?;
         let items = c.items.borrow();
-        Some(display(items.get(row as usize)?))
+        Some(items.get(row as usize)?.shown.clone())
     }
 
     // ClipboardHistoryPanel LBN_DBLCLK: the text replaces the selection.
@@ -117,12 +125,11 @@ impl App {
         let Some(c) = self.dock_ui().and_then(|d| d.clips.get()) else {
             return;
         };
-        let text = c.items.borrow().get(row.max(0) as usize).cloned();
+        let text = c.items.borrow().get(row.max(0) as usize).map(|x| x.text.clone());
         let (Some(text), Some(v)) = (text.filter(|_| row >= 0), self.editor()) else {
             return;
         };
-        sci::send(&v, SCI_REPLACESEL, 0, c"".as_ptr() as isize);
-        sci::send(&v, SCI_ADDTEXT, text.len(), text.as_ptr() as isize);
+        insert_text(&v, &text);
         self.focus();
     }
 }
@@ -134,15 +141,17 @@ mod tests {
     #[test]
     fn history_dedupe_and_limit() {
         let mut v = vec![];
-        add(&mut v, "a", 3);
-        add(&mut v, "b", 3);
-        add(&mut v, "b", 3);
-        assert_eq!(v, ["b", "a"]);
-        add(&mut v, "a", 3);
-        assert_eq!(v, ["a", "b"]);
-        add(&mut v, "c", 3);
-        add(&mut v, "d", 3);
-        assert_eq!(v, ["d", "c", "a"]);
+        let texts = |v: &Vec<Clip>| v.iter().map(|c| c.text.clone()).collect::<Vec<_>>();
+        for x in ["a", "b", "b"] {
+            add(&mut v, x.into(), 3);
+        }
+        assert_eq!(texts(&v), ["b", "a"]);
+        add(&mut v, "a".into(), 3);
+        assert_eq!(texts(&v), ["a", "b"]);
+        add(&mut v, "c".into(), 3);
+        add(&mut v, "d\r\n".repeat(20), 3);
+        assert_eq!(texts(&v)[1..], ["c", "a"]);
+        assert_eq!(v[0].shown, "d".repeat(10) + "...");
     }
 
     #[test]

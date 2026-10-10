@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::docking::{column, content_box, scroll};
+use crate::docking::{column, content_box, insert_text, scroll};
 use crate::encoding::{self, Enc};
-use crate::{ns, sci, App};
+use crate::{ns, App};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{sel, MainThreadOnly};
 use objc2_app_kit::{NSTableView, NSUserInterfaceItemIdentification, NSView};
 use std::cell::{Cell, RefCell};
 
-const SCI_REPLACESEL: u32 = 2170;
-const SCI_ADDTEXT: u32 = 2001;
 
 // asciiListView.cpp getAscii: names of the control characters and the space.
 const CONTROL: [&str; 33] = [
@@ -169,8 +167,7 @@ impl App {
         } else {
             self.chars_text(row, col.max(0) as usize).unwrap_or_default()
         };
-        sci::send(&v, SCI_REPLACESEL, 0, c"".as_ptr() as isize);
-        sci::send(&v, SCI_ADDTEXT, text.len(), text.as_ptr() as isize);
+        insert_text(&v, &text);
         self.focus();
     }
 }
