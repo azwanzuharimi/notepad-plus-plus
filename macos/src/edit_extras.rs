@@ -328,10 +328,9 @@ fn lexically_normal(p: &Path) -> PathBuf {
     out
 }
 
-// The owner write bit of the file is off; None when the path is not a file.
-fn file_read_only(p: &Path) -> Option<bool> {
-    let m = std::fs::metadata(p).ok().filter(|m| m.is_file())?;
-    Some(m.permissions().mode() & 0o200 == 0)
+// The macOS form of FILE_ATTRIBUTE_READONLY: the file has no owner write permission.
+pub fn file_read_only(p: &Path) -> bool {
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o200 == 0)
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -700,17 +699,18 @@ impl App {
             .iter_mut()
             .map(|t| {
                 t.ro = on;
-                t.view.clone()
+                (t.view.clone(), t.read_only())
             })
             .collect();
         let replacing = self.ivars().replacing.get();
-        views.iter().for_each(|v| sci::set_read_only(v, on || replacing));
-        self.doc_list_reload();
+        views.iter().for_each(|(v, ro)| sci::set_read_only(v, *ro || replacing));
+        self.refresh_labels();
     }
 
     // IDM_EDIT_TOGGLESYSTEMREADONLY: macOS has no read-only attribute, so this toggles the owner write permission.
     pub(crate) fn toggle_file_read_only(&self) {
-        let Some(t) = self.current().and_then(|i| self.tab(i)) else { return };
+        let Some(i) = self.current() else { return };
+        let Some(t) = self.tab(i) else { return };
         let Some(p) = t.path.as_deref() else { return };
         let r = std::fs::metadata(p).and_then(|m| {
             let mut perm = m.permissions();
@@ -719,8 +719,15 @@ impl App {
         });
         match r {
             Ok(()) => {
-                let file_ro = file_read_only(p).unwrap_or(false);
-                sci::set_read_only(&t.view, t.ro || file_ro || self.ivars().replacing.get());
+                let ro = {
+                    let mut tabs = self.ivars().tabs.borrow_mut();
+                    let Some(t) = tabs.get_mut(i) else { return };
+                    t.file_ro = file_read_only(p);
+                    t.read_only()
+                };
+                sci::set_read_only(&t.view, ro || self.ivars().replacing.get());
+                self.refresh_title(i);
+                self.update_status();
             }
             Err(e) => {
                 self.alert("Changing file read-only attribute failed", &e.to_string(), &["OK"]);
@@ -848,13 +855,12 @@ impl App {
         };
         let ro = sci::read_only(&t.view);
         Some(if a == sel!(toggleFileReadOnly:) {
-            let file_ro = t.path.as_deref().and_then(file_read_only);
-            item.setState(if file_ro == Some(true) {
+            item.setState(if t.file_ro {
                 NSControlStateValueOn
             } else {
                 NSControlStateValueOff
             });
-            file_ro.is_some()
+            t.path.as_deref().is_some_and(Path::is_file)
         } else if a == sel!(redactSelection:) {
             let (x, y) = sci::selection(&t.view);
             !ro && x != y
@@ -867,11 +873,8 @@ impl App {
         })
     }
 
-    // The file of the tab has no owner write permission.
     pub(crate) fn tab_file_read_only(&self, i: usize) -> bool {
-        self.tab(i)
-            .and_then(|t| file_read_only(t.path.as_deref()?))
-            .unwrap_or(false)
+        self.tab(i).is_some_and(|t| t.file_ro)
     }
 }
 
@@ -969,6 +972,21 @@ mod tests {
         assert_eq!(file_name_at("x", b" :", 1), "");
         assert_eq!(file_name_at("x", b"a b", 1), "x");
         assert_eq!(file_name_at("/tmp/x y", b"", 0), "/tmp/x y");
+    }
+
+    #[test]
+    fn file_read_only_reads_the_owner_write_bit() {
+        let d = std::env::temp_dir().join(format!("npp-ro-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("a.txt");
+        std::fs::write(&f, b"x").unwrap();
+        assert!(!file_read_only(&f));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o444)).unwrap();
+        assert!(file_read_only(&f));
+        assert!(!file_read_only(&d));
+        assert!(!file_read_only(&d.join("missing")));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

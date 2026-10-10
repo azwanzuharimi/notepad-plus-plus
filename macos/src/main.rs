@@ -101,8 +101,16 @@ struct Tab {
     enc_dirty: bool,
     lost: bool,
     ro: bool,
+    file_ro: bool,
     lang: Option<String>,
     mtime: Option<std::time::SystemTime>,
+}
+
+impl Tab {
+    // Buffer::isReadOnly: the user flag or the file flag.
+    fn read_only(&self) -> bool {
+        self.ro || self.file_ro
+    }
 }
 
 #[derive(Default)]
@@ -705,14 +713,13 @@ define_class!(
         #[unsafe(method(toggleReadOnly:))]
         fn toggle_read_only(&self, _s: Option<&AnyObject>) {
             let Some(i) = self.current() else { return };
-            let ro = {
+            {
                 let mut tabs = self.ivars().tabs.borrow_mut();
                 let Some(t) = tabs.get_mut(i) else { return };
                 t.ro = !t.ro;
-                t.ro
-            };
+            }
             if let Some(t) = self.tab(i) {
-                sci::set_read_only(&t.view, ro || self.ivars().replacing.get());
+                sci::set_read_only(&t.view, t.read_only() || self.ivars().replacing.get());
             }
             self.refresh_title(i);
         }
@@ -1651,7 +1658,7 @@ impl App {
 
     fn set_tabs_read_only(&self, on: bool) {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
-        tabs.iter().for_each(|t| sci::set_read_only(&t.view, on || t.ro));
+        tabs.iter().for_each(|t| sci::set_read_only(&t.view, on || t.read_only()));
     }
 
     // Reloads open tabs of changed files and returns the paths of modified tabs it did not reload.
@@ -1756,7 +1763,8 @@ impl App {
             &view,
             encoding::detect_eol(text).unwrap_or(p.new_doc_eol()),
         );
-        sci::set_read_only(&view, self.ivars().replacing.get());
+        let file_ro = path.as_deref().is_some_and(edit_extras::file_read_only);
+        sci::set_read_only(&view, file_ro || self.ivars().replacing.get());
         let lang = match path.as_deref() {
             Some(p) => lang::language_for_path(cfg(), p),
             None => prefs::new_doc_language(),
@@ -1786,6 +1794,7 @@ impl App {
             enc_dirty: false,
             lost,
             ro: false,
+            file_ro,
             lang: None,
             mtime,
         });
@@ -1851,7 +1860,7 @@ impl App {
             NSControlStateValueOff
         });
         let format = [sel!(encodeIn:), sel!(convertTo:), sel!(eolConvert:)].contains(&action);
-        !(format && (tab.as_ref().is_none_or(|t| t.ro) || self.ivars().replacing.get()))
+        !(format && (tab.as_ref().is_none_or(|t| t.read_only()) || self.ivars().replacing.get()))
             && !matches!(tag_enc(item.tag()), Enc::Cp(cp) if action == sel!(encodeIn:) && !encoding::supported(cp))
     }
 
