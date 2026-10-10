@@ -8,6 +8,15 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (panels):
+
+- View > Document List and View > Function List show docked panels with a title and a close button. A checkmark shows an open panel.
+- Document List is on the left and Function List is on the right, the Notepad++ default places. The panels cannot move or share a side as tabs. They keep their width when the window changes size. Their state is not saved when the app quits.
+- Function List uses the Notepad++ parser files (`PowerEditor/installer/functionList`, built into the app) and `overrideMap.xml`, with the same Boost regex engine as Find. All 44 Notepad++ function list unit tests (`PowerEditor/Test/FunctionList`, without the UDL tests) give the expected result.
+- Function List has a search box, a Sort button, and a Reload button. Sort and search text stay for each file. A double click on a function puts its line in the middle of the editor. The function at the caret is selected. The list loads again on tab switch, save, and language change, as in Notepad++. There is no Return key action, no Preferences menu, and no "Sort functions (A to Z) by default" option.
+- Document List shows Name and Ext. columns and an icon for a modified or read-only tab. A click on a row switches to the tab. There is no context menu, no Path column, and no sort by column.
+- User Defined Language parsers (KRL, NppExec, Sinumerik, UniVerse BASIC) are not used, because the app has no User Defined Languages.
+
 2026-10-10 (Paste Special, substyles):
 
 - Edit > Paste Special: Copy Binary Content, Cut Binary Content, and Paste Binary Content, as in Notepad++. They keep all bytes of the selection, also invalid UTF-8 bytes and NUL bytes. The bytes go on the pasteboard in a private type, and the text goes on it too for other apps. If there are no binary bytes on the pasteboard, Paste Binary Content pastes the text up to the first NUL. A macro does not record them, as in Notepad++. There is no Paste HTML Content or Paste RTF Content.

@@ -3,7 +3,7 @@ use crate::config::{Config, Language};
 use std::path::Path;
 
 // Copied from ScintillaEditView::_langNameInfoArray (language name, Lexilla lexer name).
-const LEXERS: &[(&str, &str)] = &[
+pub(crate) const LEXERS: &[(&str, &str)] = &[
     ("php", "phpscript"),
     ("c", "cpp"),
     ("cpp", "cpp"),
