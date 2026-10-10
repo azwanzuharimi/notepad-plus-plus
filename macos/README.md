@@ -8,6 +8,16 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (context menus and View extras):
+
+- A right click in the editor shows the Notepad++ context menu from `contextMenu.xml`: the default file of Notepad++ (`CONTEXTMENU_XML_CONTENT`), or `contextMenu.xml` in the settings folder. Items can use MenuEntryName and MenuItemName, or a command id; FolderName, ItemNameAs, and `id="0"` separators work. An item whose command is not in this app is not shown. Plugin items are not shown. A user file that does not load uses the default. The Scintilla menu is off.
+- A right click outside the selection moves the caret first, as in Notepad++.
+- Settings > Edit Popup ContextMenu writes the default `contextMenu.xml` when the file is missing, then opens it. A change applies at the next start, as in Notepad++.
+- A right click on a tab selects it and shows the Notepad++ tab menu: Close, Close Multiple Tabs, Save, Save As..., Open into (Finder, Terminal, Default Viewer), Rename, Move to Trash, Reload, Read-Only, Copy to Clipboard, and Move Document (Start, End). There is no Pin, Print, other view, new instance, or tab colour. `tabContextMenu.xml` is not read.
+- View > Hide Lines (Cmd+Opt+H, Alt+H in Notepad++) hides the selected lines with the Notepad++ markers in the bookmark margin. A click on a marker shows the lines again.
+- View > Monitoring (tail -f) makes the tab read-only, checks the file every 250 ms, and reloads it and goes to the end when it changes. Monitoring stops when the file is deleted or renamed. The monitoring state is not saved in the session.
+- View > Post-It (F12) hides the tab bar, the status bar, and the window title, and keeps the window on top. The macOS menu bar stays.
+- View > Distraction Free Mode uses full screen, Post-It, no panels, and a text column with a margin of a quarter of the screen width on each side.
 2026-10-10 (session snapshot and backup):
 
 - Session snapshot and periodic backup is on by default, every 7 seconds, as in Notepad++. Each modified tab, and each untitled tab with text, is written to `backup/<name>@<YYYY-MM-DD_HHMMSS>` in the settings folder, in the tab encoding and line ends. Only text that changed after the last backup is written. Each write goes to a temporary file first, so a failed write keeps the old backup. The timer also runs while a dialog shows. Then `session.xml` is written with the Notepad++ `backupFilePath` and `originalFileLastModifTimestamp` attributes.

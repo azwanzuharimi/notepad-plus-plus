@@ -691,11 +691,14 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             ctrl | cmd,
             t,
         ),
+        keyed(mtm, "Post-It", sel!(postIt:), 0, "\u{F70F}", NSEventModifierFlags::empty(), t),
+        item(mtm, "Distraction Free Mode", sel!(distractionFree:), "", t),
         sep(),
         nested(mtm, "Show Symbol", symbols),
         nested(mtm, "Zoom", zoom),
         nested(mtm, "Tab", tabs),
         opt_item("Word wrap", WRAP),
+        keyed(mtm, "Hide Lines", sel!(hideLines:), 0, "h", opt | cmd, t),
         sep(),
         keyed(mtm, "Fold All", sel!(foldAll:), 0, "0", opt | cmd, t),
         keyed(
@@ -736,6 +739,8 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         sep(),
         item(mtm, "Document List", sel!(toggleDocList:), "", t),
         item(mtm, "Function List", sel!(toggleFunctionList:), "", t),
+        sep(),
+        item(mtm, "Monitoring (tail -f)", sel!(monitoring:), "", t),
     ]
 }
 
