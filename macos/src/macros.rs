@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 69] = [
+const NOT_RECORDED: [&str; 115] = [
     "IDM_FILE_PRINT",
     "IDM_FILE_PRINTNOW",
     "IDM_EDIT_CUT",
@@ -115,6 +115,52 @@ const NOT_RECORDED: [&str; 69] = [
     "IDM_VIEW_MONITORING",
     "IDM_SETTING_EDITCONTEXTMENU",
     "IDM_VIEW_SWITCHTO_OTHER_VIEW",
+    "IDM_FILE_OPEN",
+    "IDM_FILE_SAVEAS",
+    "IDM_FILE_SAVECOPYAS",
+    "IDM_FILE_RENAME",
+    "IDM_FILE_DELETE",
+    "IDM_FILE_OPEN_FOLDER",
+    "IDM_FILE_OPEN_CMD",
+    "IDM_FILE_OPEN_DEFAULT_VIEWER",
+    "IDM_FILE_LOADSESSION",
+    "IDM_FILE_SAVESESSION",
+    "IDM_FILE_RESTORELASTCLOSEDFILE",
+    "IDM_OPEN_ALL_RECENT_FILE",
+    "IDM_CLEAN_RECENT_FILE_LIST",
+    "IDM_FILE_EXIT",
+    "IDM_SEARCH_FIND",
+    "IDM_SEARCH_REPLACE",
+    "IDM_SEARCH_FINDINFILES",
+    "IDM_SEARCH_GOTOLINE",
+    "IDM_VIEW_ZOOMIN",
+    "IDM_VIEW_ZOOMOUT",
+    "IDM_VIEW_ZOOMRESTORE",
+    "IDM_VIEW_SUMMARY",
+    "IDM_FORMAT_ANSI",
+    "IDM_FORMAT_AS_UTF_8",
+    "IDM_FORMAT_UTF_8",
+    "IDM_FORMAT_UTF_16BE",
+    "IDM_FORMAT_UTF_16LE",
+    "IDM_FORMAT_CONV2_ANSI",
+    "IDM_FORMAT_CONV2_AS_UTF_8",
+    "IDM_FORMAT_CONV2_UTF_8",
+    "IDM_FORMAT_CONV2_UTF_16BE",
+    "IDM_FORMAT_CONV2_UTF_16LE",
+    "IDM_SETTING_SHORTCUT_MAPPER",
+    "IDM_MACRO_STARTRECORDINGMACRO",
+    "IDM_MACRO_STOPRECORDINGMACRO",
+    "IDM_MACRO_PLAYBACKRECORDEDMACRO",
+    "IDM_MACRO_SAVECURRENTMACRO",
+    "IDM_MACRO_RUNMULTIMACRODLG",
+    "IDM_EXECUTE",
+    "IDM_CMDLINEARGUMENTS",
+    "IDM_HOMESWEETHOME",
+    "IDM_PROJECTPAGE",
+    "IDM_ONLINEDOCUMENT",
+    "IDM_FORUM",
+    "IDM_DEBUGINFO",
+    "IDM_ABOUT",
 ];
 
 pub(crate) struct Cmd {
@@ -124,29 +170,32 @@ pub(crate) struct Cmd {
     pub(crate) tag: isize,
 }
 
-// Notepad++ commands (menuCmdID.h) that this app has in its menus; a tag of -1 matches all tags.
+// The menu item tag that matches all tags.
+pub(crate) const ANY: isize = isize::MIN;
+
+// Notepad++ commands (menuCmdID.h) that this app has in its menus; a tag of ANY matches all tags.
 pub(crate) fn menu_cmds() -> Vec<Cmd> {
     let mut v: Vec<(String, i32, &'static str, isize)> = [
-        ("IDM_FILE_NEW", 41001, "newDocument:", -1),
-        ("IDM_SETTING_PREFERENCE", 48011, "showPreferences:", -1),
-        ("IDM_FILE_CLOSE", 41003, "closeTab:", -1),
+        ("IDM_FILE_NEW", 41001, "newDocument:", ANY),
+        ("IDM_SETTING_PREFERENCE", 48011, "showPreferences:", ANY),
+        ("IDM_FILE_CLOSE", 41003, "closeTab:", ANY),
         ("IDM_FILE_CLOSEALL", 41004, "closeMultiple:", 0),
         ("IDM_FILE_CLOSEALL_BUT_CURRENT", 41005, "closeMultiple:", 1),
         ("IDM_FILE_CLOSEALL_TOLEFT", 41009, "closeMultiple:", 2),
         ("IDM_FILE_CLOSEALL_TORIGHT", 41018, "closeMultiple:", 3),
         ("IDM_FILE_CLOSEALL_UNCHANGED", 41024, "closeMultiple:", 4),
-        ("IDM_FILE_SAVE", 41006, "saveDocument:", -1),
-        ("IDM_FILE_SAVEALL", 41007, "saveAll:", -1),
-        ("IDM_FILE_RELOAD", 41014, "reloadFromDisk:", -1),
-        ("IDM_FILE_PRINT", 41010, "filePrint:", -1),
-        ("IDM_FILE_PRINTNOW", 1001, "filePrintNow:", -1),
-        ("IDM_EDIT_CUT", 42001, "cut:", -1),
-        ("IDM_EDIT_COPY", 42002, "copy:", -1),
-        ("IDM_EDIT_UNDO", 42003, "undo:", -1),
-        ("IDM_EDIT_REDO", 42004, "redo:", -1),
-        ("IDM_EDIT_PASTE", 42005, "paste:", -1),
+        ("IDM_FILE_SAVE", 41006, "saveDocument:", ANY),
+        ("IDM_FILE_SAVEALL", 41007, "saveAll:", ANY),
+        ("IDM_FILE_RELOAD", 41014, "reloadFromDisk:", ANY),
+        ("IDM_FILE_PRINT", 41010, "filePrint:", ANY),
+        ("IDM_FILE_PRINTNOW", 1001, "filePrintNow:", ANY),
+        ("IDM_EDIT_CUT", 42001, "cut:", ANY),
+        ("IDM_EDIT_COPY", 42002, "copy:", ANY),
+        ("IDM_EDIT_UNDO", 42003, "undo:", ANY),
+        ("IDM_EDIT_REDO", 42004, "redo:", ANY),
+        ("IDM_EDIT_PASTE", 42005, "paste:", ANY),
         ("IDM_EDIT_DELETE", 42006, "sciCommand:", 2180),
-        ("IDM_EDIT_SELECTALL", 42007, "selectAll:", -1),
+        ("IDM_EDIT_SELECTALL", 42007, "selectAll:", ANY),
         ("IDM_EDIT_INS_TAB", 42008, "editOp:", 10),
         ("IDM_EDIT_RMV_TAB", 42009, "editOp:", 11),
         ("IDM_EDIT_DUP_LINE", 42010, "sciCommand:", 2404),
@@ -174,7 +223,7 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
         ("IDM_EDIT_TAB2SW", 42046, "editOp:", 65),
         ("IDM_EDIT_SW2TAB_ALL", 42054, "editOp:", 66),
         ("IDM_EDIT_SW2TAB_LEADING", 42053, "editOp:", 67),
-        ("IDM_EDIT_TOGGLEREADONLY", 42028, "toggleReadOnly:", -1),
+        ("IDM_EDIT_TOGGLEREADONLY", 42028, "toggleReadOnly:", ANY),
         ("IDM_EDIT_FULLPATHTOCLIP", 42029, "copyPathInfo:", 0),
         ("IDM_EDIT_FILENAMETOCLIP", 42030, "copyPathInfo:", 1),
         ("IDM_EDIT_CURRENTDIRTOCLIP", 42031, "copyPathInfo:", 2),
@@ -198,9 +247,9 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
         ("IDM_EDIT_FUNCCALLTIP_PREVIOUS", 50010, "autoComplete:", 3),
         ("IDM_EDIT_FUNCCALLTIP_NEXT", 50011, "autoComplete:", 4),
         ("IDM_EDIT_AUTOCOMPLETE_PATH", 50006, "autoComplete:", 5),
-        ("IDM_SEARCH_FINDNEXT", 43002, "findNext:", -1),
-        ("IDM_SEARCH_FINDPREV", 43010, "findPrevious:", -1),
-        ("IDM_SEARCH_FINDINCREMENT", 43011, "showIncrementalSearch:", -1),
+        ("IDM_SEARCH_FINDNEXT", 43002, "findNext:", ANY),
+        ("IDM_SEARCH_FINDPREV", 43010, "findPrevious:", ANY),
+        ("IDM_SEARCH_FINDINCREMENT", 43011, "showIncrementalSearch:", ANY),
         ("IDM_SEARCH_SETANDFINDNEXT", 43048, "searchCmd:", 0),
         ("IDM_SEARCH_SETANDFINDPREV", 43049, "searchCmd:", 1),
         ("IDM_SEARCH_VOLATILE_FINDNEXT", 43014, "searchCmd:", 2),
@@ -223,21 +272,21 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
         ("IDM_SEARCH_DELETEMARKEDLINES", 43021, "searchCmd:", 27),
         ("IDM_SEARCH_DELETEUNMARKEDLINES", 43051, "searchCmd:", 28),
         ("IDM_SEARCH_INVERSEMARKS", 43050, "searchCmd:", 29),
-        ("IDM_VIEW_ALWAYSONTOP", 44034, "alwaysOnTop:", -1),
-        ("IDM_VIEW_FULLSCREENTOGGLE", 44032, "fullScreen:", -1),
-        ("IDM_VIEW_DOCLIST", 44070, "toggleDocList:", -1),
-        ("IDM_VIEW_FUNC_LIST", 44084, "toggleFunctionList:", -1),
-        ("IDM_VIEW_POSTIT", 44009, "postIt:", -1),
-        ("IDM_VIEW_DISTRACTIONFREE", 44011, "distractionFree:", -1),
-        ("IDM_VIEW_HIDELINES", 44042, "hideLines:", -1),
-        ("IDM_VIEW_MONITORING", 44097, "monitoring:", -1),
-        ("IDM_SETTING_EDITCONTEXTMENU", 48018, "editContextMenu:", -1),
-        ("IDM_VIEW_DOC_MAP", 44080, "toggleDocMap:", -1),
-        ("IDM_VIEW_FILEBROWSER", 44085, "toggleFolderAsWorkspace:", -1),
-        ("IDM_FILE_OPENFOLDERASWORKSPACE", 41022, "openFolderAsWorkspace:", -1),
-        ("IDM_FILE_CONTAININGFOLDERASWORKSPACE", 41025, "containingFolderAsWorkspace:", -1),
-        ("IDM_EDIT_CHAR_PANEL", 42051, "toggleCharPanel:", -1),
-        ("IDM_EDIT_CLIPBOARDHISTORY_PANEL", 42052, "toggleClipboardHistory:", -1),
+        ("IDM_VIEW_ALWAYSONTOP", 44034, "alwaysOnTop:", ANY),
+        ("IDM_VIEW_FULLSCREENTOGGLE", 44032, "fullScreen:", ANY),
+        ("IDM_VIEW_DOCLIST", 44070, "toggleDocList:", ANY),
+        ("IDM_VIEW_FUNC_LIST", 44084, "toggleFunctionList:", ANY),
+        ("IDM_VIEW_POSTIT", 44009, "postIt:", ANY),
+        ("IDM_VIEW_DISTRACTIONFREE", 44011, "distractionFree:", ANY),
+        ("IDM_VIEW_HIDELINES", 44042, "hideLines:", ANY),
+        ("IDM_VIEW_MONITORING", 44097, "monitoring:", ANY),
+        ("IDM_SETTING_EDITCONTEXTMENU", 48018, "editContextMenu:", ANY),
+        ("IDM_VIEW_DOC_MAP", 44080, "toggleDocMap:", ANY),
+        ("IDM_VIEW_FILEBROWSER", 44085, "toggleFolderAsWorkspace:", ANY),
+        ("IDM_FILE_OPENFOLDERASWORKSPACE", 41022, "openFolderAsWorkspace:", ANY),
+        ("IDM_FILE_CONTAININGFOLDERASWORKSPACE", 41025, "containingFolderAsWorkspace:", ANY),
+        ("IDM_EDIT_CHAR_PANEL", 42051, "toggleCharPanel:", ANY),
+        ("IDM_EDIT_CLIPBOARDHISTORY_PANEL", 42052, "toggleClipboardHistory:", ANY),
         (
             "IDM_VIEW_WRAP",
             44022,
@@ -256,16 +305,16 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
         ("IDM_VIEW_GOTO_END", 10006, "moveTab:", 1),
         ("IDM_VIEW_TAB_MOVEFORWARD", 44098, "moveTab:", 2),
         ("IDM_VIEW_TAB_MOVEBACKWARD", 44099, "moveTab:", 3),
-        ("IDM_VIEW_GOTO_ANOTHER_VIEW", 10001, "moveToOtherView:", -1),
-        ("IDM_VIEW_CLONE_TO_ANOTHER_VIEW", 10002, "cloneToOtherView:", -1),
-        ("IDM_VIEW_SWITCHTO_OTHER_VIEW", 44072, "focusOtherView:", -1),
+        ("IDM_VIEW_GOTO_ANOTHER_VIEW", 10001, "moveToOtherView:", ANY),
+        ("IDM_VIEW_CLONE_TO_ANOTHER_VIEW", 10002, "cloneToOtherView:", ANY),
+        ("IDM_VIEW_SWITCHTO_OTHER_VIEW", 44072, "focusOtherView:", ANY),
         ("IDM_VIEW_SYNSCROLLV", 44035, "syncScroll:", 0),
         ("IDM_VIEW_SYNSCROLLH", 44036, "syncScroll:", 1),
         ("IDM_FORMAT_TODOS", 45001, "eolConvert:", 0),
         ("IDM_FORMAT_TOUNIX", 45002, "eolConvert:", 2),
         ("IDM_FORMAT_TOMAC", 45003, "eolConvert:", 1),
-        ("IDM_LANGSTYLE_CONFIG_DLG", 46001, "styleConfigurator:", -1),
-        ("IDM_SETTING_IMPORTSTYLETHEMES", 48006, "importStyleThemes:", -1),
+        ("IDM_LANGSTYLE_CONFIG_DLG", 46001, "styleConfigurator:", ANY),
+        ("IDM_SETTING_IMPORTSTYLETHEMES", 48006, "importStyleThemes:", ANY),
     ]
     .into_iter()
     .map(|(n, i, a, t)| (n.to_string(), i, a, t))
@@ -334,24 +383,24 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
     v.push(("IDM_EDIT_SORTLINES_RANDOMLY".into(), 42078, "editOp:", 12));
     v.push(("IDM_EDIT_SORTLINES_LOCALE_ASCENDING".into(), 42100, "sortLocale:", 0));
     v.push(("IDM_EDIT_SORTLINES_LOCALE_DESCENDING".into(), 42101, "sortLocale:", 1));
-    v.push(("IDM_EDIT_INSERT_DATETIME_CUSTOMIZED".into(), 42086, "insertDateTimeCustom:", -1));
+    v.push(("IDM_EDIT_INSERT_DATETIME_CUSTOMIZED".into(), 42086, "insertDateTimeCustom:", ANY));
     v.push(("IDM_EDIT_COPY_ALL_NAMES".into(), 42087, "copyAllNames:", 0));
     v.push(("IDM_EDIT_COPY_ALL_PATHS".into(), 42088, "copyAllNames:", 1));
     v.push(("IDM_EDIT_SETREADONLYFORALLDOCS".into(), 42102, "readOnlyAll:", 1));
     v.push(("IDM_EDIT_CLEARREADONLYFORALLDOCS".into(), 42103, "readOnlyAll:", 0));
-    v.push(("IDM_EDIT_TOGGLESYSTEMREADONLY".into(), 42033, "toggleFileReadOnly:", -1));
+    v.push(("IDM_EDIT_TOGGLESYSTEMREADONLY".into(), 42033, "toggleFileReadOnly:", ANY));
     v.push(("IDM_EDIT_PASTE_AS_HTML".into(), 42038, "pasteMarkup:", 0));
     v.push(("IDM_EDIT_PASTE_AS_RTF".into(), 42039, "pasteMarkup:", 1));
     v.push(("IDM_EDIT_OPENSELECTEDFILETOEDIT".into(), 42073, "onSelection:", 0));
     v.push(("IDM_EDIT_OPENSELECTEDFILEFOLDERINEXPLORER".into(), 42074, "onSelection:", 1));
     v.push(("IDM_EDIT_SEARCHONINTERNET".into(), 42075, "onSelection:", 2));
     v.push(("IDM_EDIT_CHANGESEARCHENGINE".into(), 42076, "onSelection:", 3));
-    v.push(("IDM_EDIT_REDACT_SELECTION".into(), 42106, "redactSelection:", -1));
-    v.push(("IDM_EDIT_COLUMNMODE".into(), 42034, "columnEditor:", -1));
-    v.push(("IDM_EDIT_COLUMNMODETIP".into(), 42037, "columnModeTip:", -1));
+    v.push(("IDM_EDIT_REDACT_SELECTION".into(), 42106, "redactSelection:", ANY));
+    v.push(("IDM_EDIT_COLUMNMODE".into(), 42034, "columnEditor:", ANY));
+    v.push(("IDM_EDIT_COLUMNMODETIP".into(), 42037, "columnModeTip:", ANY));
     v.push(("IDM_EDIT_COPY_BINARY".into(), 42048, "copyBinary:", 0));
     v.push(("IDM_EDIT_CUT_BINARY".into(), 42049, "copyBinary:", 1));
-    v.push(("IDM_EDIT_PASTE_BINARY".into(), 42050, "pasteBinary:", -1));
+    v.push(("IDM_EDIT_PASTE_BINARY".into(), 42050, "pasteBinary:", ANY));
     for n in 0..9 {
         v.push((
             format!("IDM_VIEW_TAB{}", n + 1),
@@ -360,7 +409,7 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
             n as isize,
         ));
     }
-    v.push(("IDM_SEARCH_MARK".into(), 43054, "showMark:", -1));
+    v.push(("IDM_SEARCH_MARK".into(), 43054, "showMark:", ANY));
     for k in 0..5 {
         let (n, t) = (k + 1, k as isize);
         v.push((format!("IDM_SEARCH_MARKALLEXT{n}"), 43022 + 2 * k, "markCmd:", t));
@@ -375,16 +424,66 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
     v.push(("IDM_SEARCH_GONEXTMARKER_DEF".into(), 43044, "markCmd:", 46));
     v.push(("IDM_SEARCH_ALLSTYLESTOCLIP".into(), 43060, "markCmd:", 55));
     v.push(("IDM_SEARCH_MARKEDTOCLIP".into(), 43061, "markCmd:", 56));
-    v.push(("IDM_LANG_USER".into(), 46180, "userDefined:", -1));
-    v.push(("IDM_LANG_USER_DLG".into(), 46250, "defineUdl:", -1));
-    v.push(("IDM_LANG_OPENUDLDIR".into(), 46300, "openUdlFolder:", -1));
-    v.push(("IDM_LANG_UDLCOLLECTION_PROJECT_SITE".into(), 46301, "udlCollection:", -1));
-    v.push(("IDM_WINDOW_WINDOWS".into(), 11001, "showWindows:", -1));
+    v.push(("IDM_LANG_USER".into(), 46180, "userDefined:", ANY));
+    v.push(("IDM_LANG_USER_DLG".into(), 46250, "defineUdl:", ANY));
+    v.push(("IDM_LANG_OPENUDLDIR".into(), 46300, "openUdlFolder:", ANY));
+    v.push(("IDM_LANG_UDLCOLLECTION_PROJECT_SITE".into(), 46301, "udlCollection:", ANY));
+    v.push(("IDM_WINDOW_WINDOWS".into(), 11001, "showWindows:", ANY));
     for (k, n) in ["FN_ASC", "FN_DSC", "FP_ASC", "FP_DSC", "FT_ASC", "FT_DSC", "FS_ASC", "FS_DSC", "FD_ASC", "FD_DSC"]
         .into_iter()
         .enumerate()
     {
         v.push((format!("IDM_WINDOW_SORT_{n}"), 11002 + k as i32, "sortTabs:", k as isize));
+    }
+    for (n, id, a, t) in [
+        ("IDM_FILE_OPEN", 41002, "openDocument:", ANY),
+        ("IDM_FILE_SAVEAS", 41008, "saveDocumentAs:", ANY),
+        ("IDM_FILE_SAVECOPYAS", 41015, "saveCopyAs:", ANY),
+        ("IDM_FILE_RENAME", 41017, "renameFile:", ANY),
+        ("IDM_FILE_DELETE", 41016, "moveToTrash:", ANY),
+        ("IDM_FILE_OPEN_FOLDER", 41019, "openFolderFinder:", ANY),
+        ("IDM_FILE_OPEN_CMD", 41020, "openFolderTerminal:", ANY),
+        ("IDM_FILE_OPEN_DEFAULT_VIEWER", 41023, "openDefaultViewer:", ANY),
+        ("IDM_FILE_LOADSESSION", 41012, "loadSession:", ANY),
+        ("IDM_FILE_SAVESESSION", 41013, "saveSession:", ANY),
+        ("IDM_FILE_RESTORELASTCLOSEDFILE", 41021, "restoreRecentClosed:", ANY),
+        ("IDM_OPEN_ALL_RECENT_FILE", 42040, "openAllRecent:", ANY),
+        ("IDM_CLEAN_RECENT_FILE_LIST", 42041, "emptyRecent:", ANY),
+        ("IDM_FILE_EXIT", 41011, "terminate:", ANY),
+        ("IDM_SEARCH_FIND", 43001, "showFind:", ANY),
+        ("IDM_SEARCH_REPLACE", 43003, "showReplace:", ANY),
+        ("IDM_SEARCH_FINDINFILES", 43013, "showFindInFiles:", ANY),
+        ("IDM_SEARCH_GOTOLINE", 43004, "goToLine:", ANY),
+        ("IDM_VIEW_ZOOMIN", 44023, "zoom:", 1),
+        ("IDM_VIEW_ZOOMOUT", 44024, "zoom:", -1),
+        ("IDM_VIEW_ZOOMRESTORE", 44033, "zoom:", 0),
+        ("IDM_VIEW_SUMMARY", 44049, "summary:", ANY),
+        ("IDM_FORMAT_ANSI", 45004, "encodeIn:", 1),
+        ("IDM_FORMAT_AS_UTF_8", 45008, "encodeIn:", 2),
+        ("IDM_FORMAT_UTF_8", 45005, "encodeIn:", 3),
+        ("IDM_FORMAT_UTF_16BE", 45006, "encodeIn:", 4),
+        ("IDM_FORMAT_UTF_16LE", 45007, "encodeIn:", 5),
+        ("IDM_FORMAT_CONV2_ANSI", 45009, "convertTo:", 1),
+        ("IDM_FORMAT_CONV2_AS_UTF_8", 45010, "convertTo:", 2),
+        ("IDM_FORMAT_CONV2_UTF_8", 45011, "convertTo:", 3),
+        ("IDM_FORMAT_CONV2_UTF_16BE", 45012, "convertTo:", 4),
+        ("IDM_FORMAT_CONV2_UTF_16LE", 45013, "convertTo:", 5),
+        ("IDM_SETTING_SHORTCUT_MAPPER", 48009, "showShortcutMapper:", ANY),
+        ("IDM_MACRO_STARTRECORDINGMACRO", 42018, "macroToggleRecord:", 0),
+        ("IDM_MACRO_STOPRECORDINGMACRO", 42019, "macroToggleRecord:", 1),
+        ("IDM_MACRO_PLAYBACKRECORDEDMACRO", 42021, "macroPlayback:", ANY),
+        ("IDM_MACRO_SAVECURRENTMACRO", 42025, "macroSave:", ANY),
+        ("IDM_MACRO_RUNMULTIMACRODLG", 42032, "macroShowMulti:", ANY),
+        ("IDM_EXECUTE", 49000, "runShow:", ANY),
+        ("IDM_CMDLINEARGUMENTS", 47010, "showCmdLineArgs:", ANY),
+        ("IDM_HOMESWEETHOME", 47001, "openLink:", 0),
+        ("IDM_PROJECTPAGE", 47002, "openLink:", 1),
+        ("IDM_ONLINEDOCUMENT", 47003, "openLink:", 2),
+        ("IDM_FORUM", 47004, "openLink:", 3),
+        ("IDM_DEBUGINFO", 47012, "showDebugInfo:", ANY),
+        ("IDM_ABOUT", 47000, "showAbout:", ANY),
+    ] {
+        v.push((n.into(), id, a, t));
     }
     v.into_iter()
         .map(|(name, id, action, tag)| Cmd {
@@ -402,7 +501,7 @@ pub fn menu_step(action: &str, tag: isize) -> Option<Step> {
     }
     menu_cmds()
         .into_iter()
-        .find(|c| c.action == action && (c.tag == -1 || c.tag == tag))
+        .find(|c| c.action == action && (c.tag == ANY || c.tag == tag))
         .filter(|c| !NOT_RECORDED.contains(&c.name.as_str()))
         .map(|c| Step::menu(c.id))
 }
@@ -580,7 +679,7 @@ fn save() -> Result<(), String> {
 pub(crate) fn find_item(m: &NSMenu, action: Sel, tag: isize) -> Option<(Retained<NSMenu>, isize)> {
     for i in 0..m.numberOfItems() {
         let it = m.itemAtIndex(i)?;
-        if it.action() == Some(action) && (tag == -1 || it.tag() == tag) {
+        if it.action() == Some(action) && (tag == ANY || it.tag() == tag) {
             return Some((m.retain(), i));
         }
         if let Some(r) = it.submenu().and_then(|s| find_item(&s, action, tag)) {
@@ -665,7 +764,7 @@ fn check_state() {
             if let Some(it) = m.itemAtIndex(i as isize) {
                 it.setEnabled(*e);
                 if i < 2 {
-                    it.setKeyEquivalent(&ns(if *e { "R" } else { "" }));
+                    crate::shortcut_mapper::record_key(&it, i, *e);
                 }
             }
         }
@@ -685,7 +784,12 @@ pub fn menus(mtm: MainThreadMarker, bar: &NSMenu, t: Option<&AnyObject>) {
         "Macro",
         items
             .iter()
-            .map(|(n, a, k)| crate::item(mtm, n, *a, k, t))
+            .enumerate()
+            .map(|(i, (n, a, k))| {
+                let it = crate::item(mtm, n, *a, k, t);
+                it.setTag(i as isize);
+                it
+            })
             .collect(),
     );
     let run = crate::nested(mtm, "Run", crate::run::run_menu_items(mtm, t));
@@ -1178,7 +1282,7 @@ mod tests {
         assert_eq!(menu_step("eolConvert:", 1), Some(Step::menu(45003)));
         assert_eq!(menu_step("cut:", 0), None);
         assert_eq!(menu_step("comment:", 4), None);
-        assert_eq!(menu_action(42001), Some(("cut:", -1)));
+        assert_eq!(menu_action(42001), Some(("cut:", ANY)));
         assert_eq!(menu_action(42047), Some(("comment:", 4)));
         assert_eq!(
             menu_step("paste:", 0),
@@ -1233,6 +1337,11 @@ mod tests {
             include_str!("prefs.rs"),
             include_str!("context_menu.rs"),
             include_str!("views.rs"),
+            include_str!("session.rs"),
+            include_str!("macros.rs"),
+            include_str!("run.rs"),
+            include_str!("tools.rs"),
+            include_str!("shortcut_mapper.rs"),
         ]
         .concat();
         let table = menu_cmds();
@@ -1256,7 +1365,7 @@ mod tests {
                 c.name
             );
             let same =
-                |d: &&Cmd| d.action == c.action && (d.tag == c.tag || d.tag == -1 || c.tag == -1);
+                |d: &&Cmd| d.action == c.action && (d.tag == c.tag || d.tag == ANY || c.tag == ANY);
             assert_eq!(table.iter().filter(same).count(), 1, "{}", c.name);
         }
         let consts = [

@@ -921,6 +921,7 @@ impl App {
             }
             m.addItem(&i);
         }
+        crate::shortcut_mapper::apply_overrides(&m);
     }
 }
 

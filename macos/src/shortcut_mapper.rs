@@ -27,6 +27,8 @@ const SCMOD_META: i32 = 16;
 const F1: u32 = 0xF704;
 
 pub const TABS: [&str; 4] = ["Main menu", "Macros", "Run commands", "Scintilla commands"];
+// The conflict groups: the tabs, then the Window menu, which has no tab.
+const GROUPS: [&str; 5] = ["Main menu", "Macros", "Run commands", "Scintilla commands", "Window menu"];
 
 // Port of namedKeyArray of shortcut.cpp, without the items that have no name.
 fn key_names() -> &'static [(String, u8)] {
@@ -89,7 +91,7 @@ fn key_names() -> &'static [(String, u8)] {
 
 // Windows virtual key, macOS menu key equivalent, Scintilla key code.
 const NAV: [(u8, char, i32); 15] = [
-    (0x08, '\u{8}', 8),
+    (0x08, '\u{7f}', 8),
     (0x09, '\t', 9),
     (0x0D, '\r', 13),
     (0x1B, '\u{1b}', 7),
@@ -181,7 +183,7 @@ pub fn key_of_menu(c: char, pad: bool) -> Option<(u8, bool)> {
             return Some((p.0, false));
         }
     }
-    if c == '\u{7f}' {
+    if c == '\u{8}' {
         return Some((0x08, false));
     }
     if let Some(n) = NAV.iter().find(|n| n.1 == c) {
@@ -201,6 +203,25 @@ pub fn key_of_menu(c: char, pad: bool) -> Option<(u8, bool)> {
             Some((0x70 + f as u8, false))
         }
     }
+}
+
+// The character that Shift gives with `c` on the US layout: AppKit and Scintilla see this character, not `c`.
+fn shifted(c: char) -> Option<char> {
+    if c.is_ascii_lowercase() {
+        return Some(c.to_ascii_uppercase());
+    }
+    SHIFTED.iter().find(|s| s.1 == c).map(|s| s.0)
+}
+
+// The menu key equivalent and the flags Command, Option, Shift, Control, numeric keypad of a key.
+// Shift with a character key gives the shifted character without the Shift flag, as AppKit matches it.
+pub fn menu_equiv(k: &Key) -> Option<(char, [bool; 5])> {
+    let (c, pad) = menu_key(k.key)?;
+    let s = (k.shift && !pad).then(|| shifted(c)).flatten();
+    Some((
+        s.unwrap_or(c),
+        [k.ctrl, k.alt, k.shift && s.is_none(), k.meta, pad],
+    ))
 }
 
 // The Scintilla key code of a Windows virtual key; letters are lower case, as in the Cocoa key map of Scintilla.
@@ -238,7 +259,13 @@ pub fn sci_def(k: &Key) -> Option<usize> {
     .iter()
     .filter(|m| m.0)
     .fold(0, |a, m| a | m.1);
-    Some((sci_key(k.key)? | mods << 16) as usize)
+    let code = sci_key(k.key)?;
+    // Scintilla on macOS compares the characters without modifiers except Shift, so Shift gives the shifted character.
+    let code = match char::from_u32(code as u32) {
+        Some(c) if k.shift && !(0x60..=0x6F).contains(&k.key) => shifted(c).map_or(code, |c| c as i32),
+        _ => code,
+    };
+    Some((code | mods << 16) as usize)
 }
 
 fn key_from_sci(code: i32, mods: i32) -> Option<Key> {
@@ -281,12 +308,30 @@ fn keys_text(keys: &[Key]) -> String {
         .join(" / ")
 }
 
+// Keys that macOS keeps: Cmd+Tab, Cmd+Shift+Tab, Cmd+Space, and the Cmd+Shift+3, 4 and 5 screenshots.
+pub fn system_key(k: &Key) -> bool {
+    let cmd = k.ctrl && !k.alt && !k.meta;
+    cmd && (k.key == 0x09 || (k.key == 0x20 && !k.shift) || (k.shift && matches!(k.key, b'3' | b'4' | b'5')))
+}
+
 // Port of Shortcut::isValid: letters, digits, space, Caps Lock, Backspace and Enter need a modifier.
 pub fn valid(k: &Key) -> bool {
-    let needs = k.key.is_ascii_uppercase()
-        || k.key.is_ascii_digit()
-        || [0x20, 0x14, 0x08, 0x0D].contains(&k.key);
-    k.key == 0 || !needs || k.ctrl || k.alt || k.meta
+    let needs = k.key.is_ascii_uppercase() || k.key.is_ascii_digit() || [0x20, 0x14, 0x08, 0x0D].contains(&k.key);
+    (k.key == 0 || !needs || k.ctrl || k.alt || k.meta) && !system_key(k)
+}
+
+// AppKit does not tell numeric keypad keys from the main keys, so a keypad key is the same as its main key.
+fn same_key(a: &Key) -> Key {
+    let (key, shift) = match a.key {
+        0x60..=0x69 => (a.key - 0x60 + b'0', a.shift),
+        0x6A => (b'8', true),
+        0x6B => (0xBB, true),
+        0x6D => (0xBD, a.shift),
+        0x6E => (0xBE, a.shift),
+        0x6F => (0xBF, a.shift),
+        k => (k, a.shift),
+    };
+    Key { key, shift, ..*a }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -307,11 +352,11 @@ pub fn conflicts(all: &[Vec<Item>], tab: usize, idx: usize, k: &Key) -> Vec<Stri
                 continue;
             }
             for (j, c) in it.keys.iter().enumerate() {
-                if c.key != 0 && c == k {
+                if c.key != 0 && same_key(c) == same_key(k) {
                     let star = if j > 0 { "*" } else { "" };
                     out.push(format!(
                         "{}  |  {}{star}   {}  ( {} )",
-                        TABS[g],
+                        GROUPS[g],
                         i + 1,
                         it.name,
                         key_text(c)
@@ -532,7 +577,7 @@ pub fn keymap(s: &Shortcuts) -> Vec<(usize, i32)> {
     let mut v: Vec<(usize, i32)> = MAC_KEYS
         .iter()
         .filter(|m| !SCINT.iter().any(|r| r.1 == m.2))
-        .map(|m| ((m.0 | m.1 << 16) as usize, m.2))
+        .filter_map(|m| Some((sci_def(&key_from_sci(m.0, m.1)?)?, m.2)))
         .collect();
     for row in (0..SCINT.len()).rev() {
         for k in scint_keys(s, row) {
@@ -546,78 +591,17 @@ pub fn keymap(s: &Shortcuts) -> Vec<(usize, i32)> {
     v
 }
 
-// Menu commands that macros.rs does not list: name, menuCmdID.h ID, action, tag (-1 matches all tags).
-const EXTRA: [(&str, i32, &str, isize); 40] = [
-    ("IDM_FILE_OPEN", 41002, "openDocument:", -1),
-    ("IDM_FILE_SAVEAS", 41008, "saveDocumentAs:", -1),
-    ("IDM_FILE_SAVECOPYAS", 41015, "saveCopyAs:", -1),
-    ("IDM_FILE_RENAME", 41017, "renameFile:", -1),
-    ("IDM_FILE_DELETE", 41016, "moveToTrash:", -1),
-    ("IDM_FILE_OPEN_FOLDER", 41019, "openFolderFinder:", -1),
-    ("IDM_FILE_OPEN_CMD", 41020, "openFolderTerminal:", -1),
-    (
-        "IDM_FILE_OPEN_DEFAULT_VIEWER",
-        41023,
-        "openDefaultViewer:",
-        -1,
-    ),
-    ("IDM_FILE_LOADSESSION", 41012, "loadSession:", -1),
-    ("IDM_FILE_SAVESESSION", 41013, "saveSession:", -1),
-    ("IDM_FILE_EXIT", 41011, "terminate:", -1),
-    ("IDM_SEARCH_FIND", 43001, "showFind:", -1),
-    ("IDM_SEARCH_REPLACE", 43003, "showReplace:", -1),
-    ("IDM_SEARCH_FINDINFILES", 43013, "showFindInFiles:", -1),
-    ("IDM_SEARCH_GOTOLINE", 43004, "goToLine:", -1),
-    ("IDM_VIEW_ZOOMIN", 44023, "zoom:", 1),
-    ("IDM_VIEW_ZOOMRESTORE", 44033, "zoom:", 0),
-    // The Zoom Out tag is -1, so this entry must come after the other two.
-    ("IDM_VIEW_ZOOMOUT", 44024, "zoom:", -1),
-    ("IDM_VIEW_SUMMARY", 44049, "summary:", -1),
-    ("IDM_FORMAT_ANSI", 45004, "encodeIn:", 1),
-    ("IDM_FORMAT_AS_UTF_8", 45008, "encodeIn:", 2),
-    ("IDM_FORMAT_UTF_8", 45005, "encodeIn:", 3),
-    ("IDM_FORMAT_UTF_16BE", 45006, "encodeIn:", 4),
-    ("IDM_FORMAT_UTF_16LE", 45007, "encodeIn:", 5),
-    ("IDM_FORMAT_CONV2_ANSI", 45009, "convertTo:", 1),
-    ("IDM_FORMAT_CONV2_AS_UTF_8", 45010, "convertTo:", 2),
-    ("IDM_FORMAT_CONV2_UTF_8", 45011, "convertTo:", 3),
-    ("IDM_FORMAT_CONV2_UTF_16BE", 45012, "convertTo:", 4),
-    ("IDM_FORMAT_CONV2_UTF_16LE", 45013, "convertTo:", 5),
-    (
-        "IDM_SETTING_SHORTCUT_MAPPER",
-        48009,
-        "showShortcutMapper:",
-        -1,
-    ),
-    (
-        "IDM_MACRO_PLAYBACKRECORDEDMACRO",
-        42021,
-        "macroPlayback:",
-        -1,
-    ),
-    ("IDM_MACRO_SAVECURRENTMACRO", 42025, "macroSave:", -1),
-    ("IDM_MACRO_RUNMULTIMACRODLG", 42032, "macroShowMulti:", -1),
-    ("IDM_EXECUTE", 49000, "runShow:", -1),
-    ("IDM_CMDLINEARGUMENTS", 47010, "showCmdLineArgs:", -1),
-    ("IDM_HOMESWEETHOME", 47001, "openLink:", 0),
-    ("IDM_PROJECTPAGE", 47002, "openLink:", 1),
-    ("IDM_ONLINEDOCUMENT", 47003, "openLink:", 2),
-    ("IDM_FORUM", 47004, "openLink:", 3),
-    ("IDM_ABOUT", 47000, "showAbout:", -1),
-];
-
 fn command_table() -> Vec<(i32, &'static str, isize)> {
     macros::menu_cmds()
         .into_iter()
         .map(|c| (c.id, c.action, c.tag))
-        .chain(EXTRA.iter().map(|e| (e.1, e.2, e.3)))
         .collect()
 }
 
 fn find_id(table: &[(i32, &str, isize)], action: &str, tag: isize) -> Option<i32> {
     table
         .iter()
-        .find(|c| c.1 == action && (c.2 == -1 || c.2 == tag))
+        .find(|c| c.1 == action && (c.2 == macros::ANY || c.2 == tag))
         .map(|c| c.0)
 }
 
@@ -668,6 +652,34 @@ fn menu_rows(mtm: MainThreadMarker) -> Vec<MenuRow> {
     rows
 }
 
+fn keyed_items(m: &NSMenu, out: &mut Vec<Item>) {
+    for i in 0..m.numberOfItems() {
+        let Some(it) = m.itemAtIndex(i) else { continue };
+        if let Some(s) = it.submenu() {
+            keyed_items(&s, out);
+        } else if item_key(&it).key != 0 {
+            out.push(Item {
+                name: it.title().to_string(),
+                keys: vec![item_key(&it)],
+            });
+        }
+    }
+}
+
+// The items with a key in the menus that menu_rows does not use, for the conflict check.
+fn window_items() -> Vec<Item> {
+    let mut out = vec![];
+    let Some(bar) = MainThreadMarker::new().and_then(|m| NSApplication::sharedApplication(m).mainMenu()) else {
+        return out;
+    };
+    for i in 0..bar.numberOfItems() {
+        if let Some(sub) = bar.itemAtIndex(i).and_then(|t| t.submenu()).filter(|s| s.delegate().is_some()) {
+            keyed_items(&sub, &mut out);
+        }
+    }
+    out
+}
+
 fn item_key(it: &NSMenuItem) -> Key {
     let m = it.keyEquivalentModifierMask();
     let c = it.keyEquivalent().to_string().chars().next();
@@ -684,21 +696,75 @@ fn item_key(it: &NSMenuItem) -> Key {
 }
 
 fn set_item_key(it: &NSMenuItem, k: &Key) {
-    let (c, pad) = menu_key(k.key).map_or((String::new(), false), |(c, p)| (c.to_string(), p));
+    let (c, f) = menu_equiv(k).map_or((String::new(), [false; 5]), |(c, f)| (c.to_string(), f));
     let mut m = NSEventModifierFlags::empty();
-    for (on, f) in [
-        (k.ctrl, NSEventModifierFlags::Command),
-        (k.alt, NSEventModifierFlags::Option),
-        (k.shift, NSEventModifierFlags::Shift),
-        (k.meta, NSEventModifierFlags::Control),
-        (pad, NSEventModifierFlags::NumericPad),
-    ] {
+    let flags = [
+        NSEventModifierFlags::Command,
+        NSEventModifierFlags::Option,
+        NSEventModifierFlags::Shift,
+        NSEventModifierFlags::Control,
+        NSEventModifierFlags::NumericPad,
+    ];
+    for (on, x) in f.into_iter().zip(flags) {
         if on {
-            m |= f;
+            m |= x;
         }
     }
     it.setKeyEquivalent(&ns(&c));
     it.setKeyEquivalentModifierMask(m);
+}
+
+const START_RECORD: i32 = 42018;
+const STOP_RECORD: i32 = 42019;
+
+thread_local! {
+    // The keys of Start Recording and Stop Recording; only the enabled item has its key, see macros::check_state.
+    static RECORD: Cell<[Key; 2]> = const { Cell::new([Key { ctrl: true, alt: false, shift: true, meta: false, key: b'R' }; 2]) };
+}
+
+pub fn record_key(it: &NSMenuItem, i: usize, on: bool) {
+    let k = RECORD.with(|r| r.get()[i.min(1)]);
+    set_item_key(it, &if on { k } else { Key::default() });
+}
+
+// Gives a menu item its key; Start and Stop Recording keep the key while they are disabled.
+fn set_command_key(id: i32, it: &NSMenuItem, k: &Key) {
+    if id == START_RECORD || id == STOP_RECORD {
+        let i = (id == STOP_RECORD) as usize;
+        RECORD.with(|r| {
+            let mut v = r.get();
+            v[i] = *k;
+            r.set(v);
+        });
+        record_key(it, i, it.isEnabled());
+    } else {
+        set_item_key(it, k);
+    }
+}
+
+fn command_key(id: i32, it: &NSMenuItem) -> Key {
+    match id {
+        START_RECORD => RECORD.with(|r| r.get()[0]),
+        STOP_RECORD => RECORD.with(|r| r.get()[1]),
+        _ => item_key(it),
+    }
+}
+
+fn apply_rows(rows: &[MenuRow]) {
+    let keys: Vec<(i32, Key)> =
+        macros::with_store(|s| s.internal.iter().filter(|c| c.nth == 0).map(|c| (c.id, c.key)).collect());
+    for (id, k) in keys {
+        for it in rows.iter().filter(|r| r.id == id).flat_map(|r| &r.items) {
+            set_command_key(id, it, &k);
+        }
+    }
+}
+
+// Gives the items of `m` the <InternalCommands> keys; for menus that the app makes again, as the recent files.
+pub fn apply_overrides(m: &NSMenu) {
+    let mut rows = vec![];
+    walk(m, "", &command_table(), &mut rows);
+    apply_rows(&rows);
 }
 
 fn bind(m: &NSMenu, action: Sel, keys: &[Key]) {
@@ -741,7 +807,7 @@ fn all_items(menu: &[MenuRow]) -> Vec<Vec<Item>> {
         .iter()
         .map(|r| Item {
             name: r.name.clone(),
-            keys: vec![item_key(&r.items[0])],
+            keys: vec![command_key(r.id, &r.items[0])],
         })
         .collect();
     macros::with_store(|s| {
@@ -767,6 +833,7 @@ fn all_items(menu: &[MenuRow]) -> Vec<Vec<Item>> {
                     keys: scint_keys(s, i),
                 })
                 .collect(),
+            window_items(),
         ]
     })
 }
@@ -1104,6 +1171,8 @@ fn dlg_state(d: &Dlg) {
         } else {
             "This will disable the accelerator"
         }
+    } else if system_key(&k) {
+        "macOS uses this shortcut"
     } else if !conflicts(&d.all, d.tab, d.idx, &k).is_empty() {
         "CONFLICT FOUND!"
     } else {
@@ -1142,14 +1211,7 @@ impl App {
 
     // Applies the shortcuts.xml keys at start, like NppParameters::feedShortcut and feedScintKeys.
     pub(crate) fn mapper_start(&self) {
-        let menu = menu_rows(self.mtm());
-        let keys: Vec<(i32, Key)> =
-            macros::with_store(|s| s.internal.iter().filter(|c| c.nth == 0).map(|c| (c.id, c.key)).collect());
-        for (id, k) in keys {
-            for it in menu.iter().filter(|r| r.id == id).flat_map(|r| &r.items) {
-                set_item_key(it, &k);
-            }
-        }
+        apply_rows(&menu_rows(self.mtm()));
         for t in self.ivars().tabs.borrow().iter() {
             self.mapper_arm(&t.view);
         }
@@ -1364,7 +1426,7 @@ impl App {
             }
         });
         if tab == 0 {
-            menu[idx].items.iter().for_each(|it| set_item_key(it, &k));
+            menu[idx].items.iter().for_each(|it| set_command_key(menu[idx].id, it, &k));
         }
         if tab == 3 {
             for t in self.ivars().tabs.borrow().iter() {
@@ -1482,6 +1544,7 @@ mod tests {
         assert_eq!(key_of_menu('+', false), Some((0xBB, true)));
         assert_eq!(key_of_menu('?', false), Some((0xBF, true)));
         assert_eq!(key_of_menu('\u{7f}', false), Some((0x08, false)));
+        assert_eq!(key_of_menu('\u{8}', false), Some((0x08, false)));
         assert_eq!(key_of_menu('\u{F70F}', false), Some((0x7B, false)));
         assert_eq!(key_of_menu('é', false), None);
     }
@@ -1495,7 +1558,7 @@ mod tests {
         assert_eq!(sci_key(b'A'), Some('a' as i32));
         assert_eq!(sci_key(0x25), Some(sci("SCK_LEFT")));
         assert_eq!(sci_key(0x6B), Some(sci("SCK_ADD")));
-        assert_eq!(sci_def(&k("cs", b'L')), Some(('l' as usize) | 3 << 16));
+        assert_eq!(sci_def(&k("cs", b'L')), Some(('L' as usize) | 3 << 16));
         assert_eq!(sci_def(&k("m", 0x25)), Some(302 | 16 << 16));
         assert_eq!(key_from_sci(302, 17), Some(k("ms", 0x25)));
     }
@@ -1556,7 +1619,11 @@ mod tests {
     #[test]
     fn default_keymap_is_the_scintilla_one() {
         let s = Shortcuts::default();
-        let scintilla: Vec<(usize, i32)> = MAC_KEYS.iter().map(|m| ((m.0 | m.1 << 16) as usize, m.2)).collect();
+        // Shift with a letter or a symbol gives the shifted character, so Cmd+Shift+L is 'L', not the 'l' of Scintilla.
+        let scintilla: Vec<(usize, i32)> = MAC_KEYS
+            .iter()
+            .map(|m| (key_from_sci(m.0, m.1).and_then(|k| sci_def(&k)).unwrap(), m.2))
+            .collect();
         assert_eq!(final_map(&keymap(&s)), final_map(&scintilla));
         assert_eq!(scint_keys(&s, 35), vec![k("a", 0x25), k("m", 0x25)]);
         assert!(scint_keys(&s, 2).is_empty());
@@ -1635,30 +1702,75 @@ mod tests {
     }
 
     #[test]
-    fn extra_commands_match_sources() {
-        let srcs = [
-            include_str!("main.rs"),
-            include_str!("fileops.rs"),
-            include_str!("search_extras.rs"),
-            include_str!("view.rs"),
-            include_str!("session.rs"),
-            include_str!("macros.rs"),
-            include_str!("run.rs"),
-            include_str!("tools.rs"),
-            include_str!("shortcut_mapper.rs"),
-        ]
-        .concat();
+    fn command_ids() {
         let table = command_table();
-        let macro_ids: Vec<i32> = macros::menu_cmds().iter().map(|c| c.id).collect();
-        for (name, id, action, tag) in EXTRA {
-            assert_eq!(id_of(name), id, "{name}");
-            assert!(srcs.contains(&format!("sel!({action})")), "{action}");
-            assert!(!macro_ids.contains(&id), "{name}");
-            assert_eq!(find_id(&table, action, tag), Some(id), "{name}");
-            assert_eq!(table.iter().filter(|c| c.0 == id).count(), 1, "{name}");
-        }
+        assert_eq!(find_id(&table, "zoom:", 1), Some(44023));
+        assert_eq!(find_id(&table, "zoom:", -1), Some(44024));
         assert_eq!(find_id(&table, "zoom:", 0), Some(44033));
         assert_eq!(find_id(&table, "openLink:", 3), Some(47004));
-        assert!(srcs.contains("Notepad++ Community (Forum)\",\n        \"https://community"));
+        assert_eq!(find_id(&table, "macroToggleRecord:", 1), Some(42019));
+        assert_eq!(find_id(&table, "newDocument:", 7), Some(41001));
+        assert_eq!(find_id(&table, "showDebugInfo:", 0), Some(47012));
+        assert_eq!(find_id(&table, "restoreRecentClosed:", 9), Some(41021));
+        let src = include_str!("macros.rs");
+        assert!(src.contains("(\"Start Recording\", sel!(macroToggleRecord:), \"\"),\n        (\"Stop Recording\", sel!(macroToggleRecord:), \"\"),"));
+        assert!(src.contains("it.setTag(i as isize);"));
+        assert!(include_str!("tools.rs").contains("Notepad++ Community (Forum)\",\n        \"https://community"));
+    }
+
+    fn equiv(mods: &str, key: u8) -> Option<(char, [bool; 5])> {
+        menu_equiv(&k(mods, key))
+    }
+
+    #[test]
+    fn menu_key_equivalents() {
+        let f = |c: bool, o: bool, s: bool, m: bool, p: bool| [c, o, s, m, p];
+        assert_eq!(equiv("cs", b'S'), Some(('S', f(true, false, false, false, false))));
+        assert_eq!(equiv("c", b'S'), Some(('s', f(true, false, false, false, false))));
+        assert_eq!(equiv("cs", 0xBB), Some(('+', f(true, false, false, false, false))));
+        assert_eq!(equiv("cs", b'7'), Some(('&', f(true, false, false, false, false))));
+        assert_eq!(equiv("c", 0x08), Some(('\u{7f}', f(true, false, false, false, false))));
+        assert_eq!(equiv("s", 0x74), Some(('\u{F708}', f(false, false, true, false, false))));
+        assert_eq!(equiv("cs", 0x25), Some(('\u{F702}', f(true, false, true, false, false))));
+        assert_eq!(equiv("s", 0x61), Some(('1', f(false, false, true, false, true))));
+        assert_eq!(equiv("c", 0xE2), None);
+        for (n, vk) in key_names().iter().filter(|n| !matches!(n.0.as_str(), "None" | "<>")) {
+            for mods in ["c", "cs", "as", "ms"] {
+                let key = k(mods, *vk);
+                let (c, f) = menu_equiv(&key).unwrap();
+                let (v, shift) = key_of_menu(c, f[4]).unwrap();
+                assert_eq!((v, shift || f[2]), (*vk, key.shift), "{n} {mods}");
+            }
+        }
+    }
+
+    #[test]
+    fn scintilla_shift_keys() {
+        assert_eq!(sci_def(&k("cs", b'K')), Some('K' as usize | 3 << 16));
+        assert_eq!(sci_def(&k("c", b'K')), Some('k' as usize | 2 << 16));
+        assert_eq!(sci_def(&k("cs", 0xDB)), Some('{' as usize | 3 << 16));
+        assert_eq!(sci_def(&k("s", 0x25)), Some(302 | 1 << 16));
+        assert_eq!(sci_def(&k("s", 0x6E)), Some('.' as usize | 1 << 16));
+        assert_eq!(key_from_sci('L' as i32, 3), Some(k("cs", b'L')));
+    }
+
+    #[test]
+    fn numpad_and_system_keys() {
+        let all = vec![vec![Item {
+            name: "One".into(),
+            keys: vec![k("c", b'1')],
+        }], vec![], vec![], vec![], vec![Item {
+            name: "Windows...".into(),
+            keys: vec![k("cs", b'W')],
+        }]];
+        assert_eq!(conflicts(&all, 1, 0, &k("c", 0x61)), vec!["Main menu  |  1   One  ( Cmd+1 )"]);
+        assert_eq!(conflicts(&all, 1, 0, &k("cs", b'W')), vec!["Window menu  |  1   Windows...  ( Cmd+Shift+W )"]);
+        assert!(conflicts(&all, 1, 0, &k("cs", b'1')).is_empty());
+        for bad in [k("c", 0x09), k("cs", 0x09), k("c", 0x20), k("cs", b'3'), k("cs", b'4'), k("cs", b'5')] {
+            assert!(system_key(&bad) && !valid(&bad), "{bad:?}");
+        }
+        for ok in [k("ca", 0x09), k("cs", b'6'), k("m", 0x20), k("c", b'3')] {
+            assert!(!system_key(&ok) && valid(&ok), "{ok:?}");
+        }
     }
 }
