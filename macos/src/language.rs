@@ -138,6 +138,7 @@ impl App {
             sci::apply_language(&t.view, cfg(), l);
             self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()));
         }
+        self.function_list_reload();
     }
 
     // NppCommands.cpp IDM_LANG_*: the menu choice stays when the file name changes later.

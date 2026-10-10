@@ -4,10 +4,12 @@ mod binary;
 mod comment;
 mod column;
 mod config;
+mod docking;
 mod edit;
 mod encoding;
 mod fileops;
 mod finder;
+mod funclist;
 mod incsearch;
 mod lang;
 mod language;
@@ -33,7 +35,8 @@ use objc2_app_kit::{
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControlStateValueOff,
     NSControlStateValueOn, NSEvent, NSMenu, NSMenuDelegate, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
+    NSOpenPanel, NSOutlineView, NSOutlineViewDataSource, NSSplitView, NSTableColumn,
+    NSTableView, NSTableViewDataSource, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
     NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
@@ -104,6 +107,7 @@ struct Ivars {
     status: OnceCell<Vec<Retained<NSTextField>>>,
     view: Cell<view::Opts>,
     begin_select: Cell<Option<(isize, bool)>>,
+    dock: OnceCell<docking::Dock>,
 }
 
 #[repr(C)]
@@ -203,6 +207,7 @@ define_class!(
             if h.code == sci::SCN_UPDATEUI && h.id_from != sci::RESULTS_ID {
                 self.update_status();
                 self.schedule_smart_highlight();
+                self.function_list_mark();
             }
             if h.code == sci::SCN_DOUBLECLICK && h.id_from == sci::RESULTS_ID {
                 let v = &self.ivars().results.get().unwrap().0;
@@ -687,6 +692,7 @@ define_class!(
             if let Some(t) = self.tab(i) {
                 sci::set_read_only(&t.view, ro || self.ivars().replacing.get());
             }
+            self.doc_list_reload();
         }
 
         #[unsafe(method(cut:))]
@@ -995,6 +1001,87 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(toggleDocList:))]
+        fn toggle_doc_list(&self, _s: Option<&AnyObject>) {
+            self.toggle_panel(docking::LEFT);
+        }
+
+        #[unsafe(method(toggleFunctionList:))]
+        fn toggle_function_list(&self, _s: Option<&AnyObject>) {
+            self.toggle_panel(docking::RIGHT);
+        }
+
+        #[unsafe(method(dockClose:))]
+        fn dock_close(&self, s: &NSButton) {
+            self.toggle_panel(s.tag());
+        }
+
+        #[unsafe(method(docListClick:))]
+        fn doc_list_click_action(&self, _s: Option<&AnyObject>) {
+            self.doc_list_click();
+        }
+
+        #[unsafe(method(functionListOpen:))]
+        fn function_list_open_action(&self, _s: Option<&AnyObject>) {
+            self.function_list_open();
+        }
+
+        #[unsafe(method(functionListSearch:))]
+        fn function_list_search_action(&self, _s: Option<&AnyObject>) {
+            self.function_list_search();
+        }
+
+        #[unsafe(method(functionListSort:))]
+        fn function_list_sort_action(&self, _s: Option<&AnyObject>) {
+            self.function_list_search();
+        }
+
+        #[unsafe(method(functionListReload:))]
+        fn function_list_reload_action(&self, _s: Option<&AnyObject>) {
+            self.function_list_search();
+        }
+
+        #[unsafe(method(tabViewDidChangeNumberOfTabViewItems:))]
+        fn tab_count_changed(&self, _t: &NSTabView) {
+            self.doc_list_reload();
+        }
+
+        #[unsafe(method(numberOfRowsInTableView:))]
+        fn doc_list_count(&self, _t: &NSTableView) -> isize {
+            self.doc_list_rows()
+        }
+
+        #[unsafe(method_id(tableView:objectValueForTableColumn:row:))]
+        fn doc_list_object(&self, _t: &NSTableView, c: &NSTableColumn, row: isize) -> Option<Retained<AnyObject>> {
+            self.doc_list_value(c, row)
+        }
+
+        #[unsafe(method(outlineView:numberOfChildrenOfItem:))]
+        fn fl_count(&self, _o: &NSOutlineView, item: Option<&AnyObject>) -> isize {
+            self.function_list_count(item)
+        }
+
+        #[unsafe(method_id(outlineView:child:ofItem:))]
+        fn fl_child(&self, _o: &NSOutlineView, n: isize, item: Option<&AnyObject>) -> Option<Retained<AnyObject>> {
+            self.function_list_child(n, item)
+        }
+
+        #[unsafe(method(outlineView:isItemExpandable:))]
+        fn fl_expandable(&self, _o: &NSOutlineView, item: &AnyObject) -> bool {
+            self.function_list_expandable(Some(item))
+        }
+
+        #[unsafe(method_id(outlineView:objectValueForTableColumn:byItem:))]
+        fn fl_object(&self, _o: &NSOutlineView, _c: Option<&NSTableColumn>, item: Option<&AnyObject>) -> Option<Retained<AnyObject>> {
+            self.function_list_value(item)
+        }
+    }
+
+    unsafe impl NSTableViewDataSource for App {}
+
+    unsafe impl NSOutlineViewDataSource for App {}
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -1048,6 +1135,8 @@ define_class!(
         fn did_select(&self, _t: &NSTabView, _i: Option<&NSTabViewItem>) {
             self.focus();
             self.update_status();
+            self.doc_list_reload();
+            self.function_list_reload();
         }
     }
 );
@@ -1103,7 +1192,7 @@ impl App {
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
-        content.addSubview(&split);
+        content.addSubview(&self.dock(&split));
         let mut right = size.width;
         let mut status = vec![];
         for wd in STATUS_WIDTHS.iter().rev() {
@@ -1552,6 +1641,7 @@ impl App {
         let mark = if self.dirty(&t) { "*" } else { "" };
         t.item
             .setLabel(&NSString::from_str(&format!("{mark}{}", t.name)));
+        self.doc_list_reload();
     }
 
     fn save(&self, i: usize, ask: bool) -> bool {
@@ -1595,6 +1685,7 @@ impl App {
         }
         self.refresh_title(i);
         self.update_status();
+        self.function_list_reload();
         true
     }
 

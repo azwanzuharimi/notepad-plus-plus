@@ -261,7 +261,7 @@ impl App {
             return;
         }
         b.view.setHidden(!show);
-        let split = self.ivars().split.get().unwrap();
+        let Some(split) = self.editor_area() else { return };
         let mut f = split.frame();
         let d = if show { BAR_H } else { -BAR_H };
         f.origin.y += d;
