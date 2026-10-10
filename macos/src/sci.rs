@@ -63,6 +63,8 @@ const SCI_COLOURISE: u32 = 4003;
 const SCI_SETPROPERTY: u32 = 4004;
 const SCI_SETKEYWORDS: u32 = 4005;
 const SCI_SETILEXER: u32 = 4033;
+const SCI_ALLOCATESUBSTYLES: u32 = 4020;
+const SCI_SETIDENTIFIERS: u32 = 4024;
 const SCI_SETTABWIDTH: u32 = 2036;
 const SCI_SETUSETABS: u32 = 2124;
 const SCI_SETVIEWWS: u32 = 2021;
@@ -364,7 +366,13 @@ pub fn apply_language(v: &NSView, cfg: &Config, lang: Option<&crate::config::Lan
         );
     }
     for (i, words) in setup.keywords {
-        send_str(v, SCI_SETKEYWORDS, i, words);
+        send_str(v, SCI_SETKEYWORDS, i, &words);
+    }
+    for (base, lists) in lang::substyles(cfg, name) {
+        let first = send(v, SCI_ALLOCATESUBSTYLES, base, lists.len() as isize);
+        for (k, words) in lists.iter().enumerate().filter(|_| first >= 0) {
+            send_str(v, SCI_SETIDENTIFIERS, first as usize + k, words);
+        }
     }
     for id in setup.eol_filled {
         send(v, SCI_STYLESETEOLFILLED, id, 1);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod autoc;
+mod binary;
 mod comment;
 mod column;
 mod config;
@@ -963,6 +964,18 @@ define_class!(
         #[unsafe(method(menuNeedsUpdate:))]
         fn menu_needs_update(&self, m: &NSMenu) {
             self.update_window_menu(m);
+        }
+    }
+
+    impl App {
+        #[unsafe(method(copyBinary:))]
+        fn copy_binary_action(&self, s: &NSMenuItem) {
+            self.copy_binary(s.tag() == 1);
+        }
+
+        #[unsafe(method(pasteBinary:))]
+        fn paste_binary_action(&self, _s: Option<&AnyObject>) {
+            self.paste_binary();
         }
     }
 

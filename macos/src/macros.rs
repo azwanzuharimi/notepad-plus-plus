@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 36] = [
+const NOT_RECORDED: [&str; 39] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -82,6 +82,9 @@ const NOT_RECORDED: [&str; 36] = [
     "IDM_EDIT_FUNCCALLTIP_PREVIOUS",
     "IDM_EDIT_FUNCCALLTIP_NEXT",
     "IDM_EDIT_AUTOCOMPLETE_PATH",
+    "IDM_EDIT_COPY_BINARY",
+    "IDM_EDIT_CUT_BINARY",
+    "IDM_EDIT_PASTE_BINARY",
 ];
 
 struct Cmd {
@@ -275,6 +278,9 @@ fn menu_cmds() -> Vec<Cmd> {
     }
     v.push(("IDM_EDIT_COLUMNMODE".into(), 42034, "columnEditor:", -1));
     v.push(("IDM_EDIT_COLUMNMODETIP".into(), 42037, "columnModeTip:", -1));
+    v.push(("IDM_EDIT_COPY_BINARY".into(), 42048, "copyBinary:", 0));
+    v.push(("IDM_EDIT_CUT_BINARY".into(), 42049, "copyBinary:", 1));
+    v.push(("IDM_EDIT_PASTE_BINARY".into(), 42050, "pasteBinary:", -1));
     for n in 0..9 {
         v.push((
             format!("IDM_VIEW_TAB{}", n + 1),
@@ -1132,6 +1138,7 @@ mod tests {
             include_str!("mark.rs"),
             include_str!("window.rs"),
             include_str!("autoc.rs"),
+            include_str!("binary.rs"),
         ]
         .concat();
         let table = menu_cmds();
