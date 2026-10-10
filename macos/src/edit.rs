@@ -55,6 +55,10 @@ const SCI_TARGETWHOLEDOCUMENT: u32 = 2690;
 const SC_SEL_STREAM: usize = 0;
 const SC_SEL_RECTANGLE: isize = 1;
 const SC_SEL_THIN: isize = 3;
+const SCI_GETRECTANGULARSELECTIONCARET: u32 = 2589;
+const SCI_GETRECTANGULARSELECTIONANCHOR: u32 = 2591;
+const SCI_GETRECTANGULARSELECTIONCARETVIRTUALSPACE: u32 = 2593;
+const SCI_GETRECTANGULARSELECTIONANCHORVIRTUALSPACE: u32 = 2595;
 
 // Menu tags of the editOp: action.
 const DEDUP: isize = 1;
@@ -68,6 +72,7 @@ const LINE_BELOW: isize = 8;
 const REVERSE: isize = 9;
 const INDENT: isize = 10;
 const OUTDENT: isize = 11;
+const RANDOM: isize = 12;
 const SORT: isize = 20;
 const CASE: isize = 40;
 const TRIM_TRAIL: isize = 60;
@@ -109,14 +114,16 @@ pub enum Sort {
     Integer,
     DecimalComma,
     DecimalDot,
+    Length,
 }
 
-const SORTS: [(&str, Sort); 5] = [
+const SORTS: [(&str, Sort); 6] = [
     ("Lexicographically", Sort::Lex),
     ("Lex. %s Ignoring Case", Sort::LexIgnoreCase),
     ("As Integers", Sort::Integer),
     ("As Decimals (Comma)", Sort::DecimalComma),
     ("As Decimals (Dot)", Sort::DecimalDot),
+    ("By Length", Sort::Length),
 ];
 
 type Unit = Result<char, u8>;
@@ -433,7 +440,7 @@ fn fold(b: &[u8]) -> Vec<u8> {
 
 // Sorts like the Notepad++ sorters; an error gives the index of the line that is not a number.
 // Stable merge sort that needs no total order: the Notepad++ integer comparator is not one, and sort_by can panic on it.
-fn merge_sort<T: Clone>(v: &mut [T], less: &impl Fn(&T, &T) -> bool) {
+pub(crate) fn merge_sort<T: Clone>(v: &mut [T], less: &impl Fn(&T, &T) -> bool) {
     if v.len() < 2 {
         return;
     }
@@ -456,21 +463,55 @@ fn merge_sort<T: Clone>(v: &mut [T], less: &impl Fn(&T, &T) -> bool) {
     v.clone_from_slice(&out);
 }
 
+#[cfg(test)]
 pub fn sort_lines(v: &mut Vec<&[u8]>, how: Sort, desc: bool) -> Result<(), usize> {
+    sort_lines_cols(v, how, desc, (0, 0))
+}
+
+// Port of ISorter::getSortKey; Notepad++ counts UTF-16 units of the line, this counts bytes.
+fn sort_key(l: &[u8], (from, to): (usize, usize)) -> &[u8] {
+    if to == 0 {
+        l
+    } else if l.len() < from {
+        &[]
+    } else if from == to {
+        &l[from..]
+    } else {
+        &l[from..to.min(l.len())]
+    }
+}
+
+fn utf16_len(b: &[u8]) -> usize {
+    String::from_utf8_lossy(b).encode_utf16().count()
+}
+
+// Sorts on the text of the columns `cols` (from, to) of each line; (0, 0) is the whole line.
+pub fn sort_lines_cols(
+    v: &mut Vec<&[u8]>,
+    how: Sort,
+    desc: bool,
+    cols: (usize, usize),
+) -> Result<(), usize> {
     let less = |o: Ordering| if desc { o.is_gt() } else { o.is_lt() };
+    let key = |l: &[u8]| sort_key(l, cols).to_vec();
     match how {
-        Sort::Lex => merge_sort(v, &|a, b| less(a.cmp(b))),
+        Sort::Lex => merge_sort(v, &|a, b| less(sort_key(a, cols).cmp(sort_key(b, cols)))),
         Sort::LexIgnoreCase => {
-            let mut k: Vec<(Vec<u8>, &[u8])> = v.iter().map(|a| (fold(a), *a)).collect();
+            let mut k: Vec<(Vec<u8>, &[u8])> = v.iter().map(|a| (fold(&key(a)), *a)).collect();
             merge_sort(&mut k, &|a, b| less(a.0.cmp(&b.0)));
             *v = k.into_iter().map(|x| x.1).collect();
         }
-        Sort::Integer => merge_sort(v, &|a, b| less(int_cmp(a, b))),
+        Sort::Integer => merge_sort(v, &|a, b| {
+            less(int_cmp(sort_key(a, cols), sort_key(b, cols)))
+        }),
+        Sort::Length => merge_sort(v, &|a, b| {
+            less(utf16_len(sort_key(a, cols)).cmp(&utf16_len(sort_key(b, cols))))
+        }),
         Sort::DecimalComma | Sort::DecimalDot => {
             let mut nums = vec![];
             let mut empties = vec![];
             for (i, l) in v.iter().enumerate() {
-                match decimal(l, how == Sort::DecimalComma) {
+                match decimal(&key(l), how == Sort::DecimalComma) {
                     Some(Some(x)) => nums.push((x, *l)),
                     Some(None) => empties.push(*l),
                     None => return Err(i),
@@ -492,18 +533,42 @@ pub fn sort_lines(v: &mut Vec<&[u8]>, how: Sort, desc: bool) -> Result<(), usize
 pub enum LineOp {
     Sort(Sort, bool),
     Reverse,
+    Random(u64),
     Dedup,
 }
 
+// Port of RandomSorter with a seeded xorshift generator in place of std::default_random_engine.
+pub fn shuffle<T>(v: &mut [T], seed: u64) {
+    let mut x = seed | 1;
+    for i in (1..v.len()).rev() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        v.swap(i, (x % (i as u64 + 1)) as usize);
+    }
+}
+
 // Port of ScintillaEditView::sortLines and removeAnyDuplicateLines on the text of the line range.
+#[cfg(test)]
 pub fn line_op(t: &[u8], eol: &[u8], whole: bool, op: LineOp) -> Result<Vec<u8>, usize> {
+    line_op_cols(t, eol, whole, op, (0, 0))
+}
+
+pub fn line_op_cols(
+    t: &[u8],
+    eol: &[u8],
+    whole: bool,
+    op: LineOp,
+    cols: (usize, usize),
+) -> Result<Vec<u8>, usize> {
     let mut v = split(t, eol);
     if !whole && v.last().is_some_and(|l| l.is_empty()) {
         v.pop();
     }
     match op {
-        LineOp::Sort(how, desc) => sort_lines(&mut v, how, desc)?,
+        LineOp::Sort(how, desc) => sort_lines_cols(&mut v, how, desc, cols)?,
         LineOp::Reverse => v.reverse(),
+        LineOp::Random(seed) => shuffle(&mut v, seed),
         LineOp::Dedup => {
             let mut seen = HashSet::new();
             v.retain(|l| seen.insert(*l));
@@ -782,7 +847,7 @@ fn replace(v: &NSView, start: isize, old: &[u8], new: &[u8]) -> bool {
     true
 }
 
-fn undo<R>(v: &NSView, f: impl FnOnce() -> R) -> R {
+pub(crate) fn undo<R>(v: &NSView, f: impl FnOnce() -> R) -> R {
     s(v, SCI_BEGINUNDOACTION, 0, 0);
     let r = f();
     s(v, SCI_ENDUNDOACTION, 0, 0);
@@ -793,20 +858,34 @@ fn text(v: &NSView, a: isize, b: isize) -> Vec<u8> {
     sci::doc(v).range(a, b)
 }
 
+// Port of the IDM_EDIT_SORTLINES_* handler: a rectangular selection gives the lines and the sort columns.
 fn run_line_op(v: &NSView, op: LineOp) -> Result<(), usize> {
+    let mut cols = (0, 0);
+    let mut rect = None;
     if s(v, SCI_GETSELECTIONS, 0, 0) > 1 {
-        return Ok(());
+        if op == LineOp::Dedup || !block_mode(v) {
+            return Ok(());
+        }
+        let (ra, rc) = (
+            s(v, SCI_GETRECTANGULARSELECTIONANCHOR, 0, 0),
+            s(v, SCI_GETRECTANGULARSELECTIONCARET, 0, 0),
+        );
+        let (la, lc) = (line_of(v, ra), line_of(v, rc));
+        let oa = ra - line_start(v, la) + s(v, SCI_GETRECTANGULARSELECTIONANCHORVIRTUALSPACE, 0, 0);
+        let oc = rc - line_start(v, lc) + s(v, SCI_GETRECTANGULARSELECTIONCARETVIRTUALSPACE, 0, 0);
+        cols = (oa.min(oc).max(0) as usize, oa.max(oc).max(0) as usize);
+        rect = Some((la.min(lc), la.max(lc)));
     }
-    let has = has_selection(v);
+    let has = rect.is_none() && has_selection(v);
     let n = line_count(v);
-    let (l1, l2) = if has { sel_lines(v) } else { (0, n - 1) };
+    let (l1, l2) = rect.unwrap_or_else(|| if has { sel_lines(v) } else { (0, n - 1) });
     if has && l1 == l2 {
         return Ok(());
     }
     let start = line_start(v, l1);
     let old = text(v, start, line_start(v, l2) + s(v, SCI_LINELENGTH, l2, 0));
     let whole = l2 == n - 1;
-    let new = line_op(&old, eol(v), whole, op).map_err(|i| l1 as usize + i)?;
+    let new = line_op_cols(&old, eol(v), whole, op, cols).map_err(|i| l1 as usize + i)?;
     undo(v, || replace(v, start, &old, &new));
     if has {
         let tail = if whole { 0 } else { eol(v).len() };
@@ -1040,7 +1119,13 @@ pub fn run(v: &NSView, tag: isize) -> Result<(), usize> {
     match tag {
         DEDUP => return run_line_op(v, LineOp::Dedup),
         REVERSE => return run_line_op(v, LineOp::Reverse),
-        t if (SORT..SORT + 10).contains(&t) => {
+        RANDOM => {
+            let seed = std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish();
+            return run_line_op(v, LineOp::Random(seed));
+        }
+        t if (SORT..SORT + 2 * SORTS.len() as isize).contains(&t) => {
             let k = (t - SORT) as usize;
             return run_line_op(v, LineOp::Sort(SORTS[k / 2].1, k % 2 == 1));
         }
@@ -1121,7 +1206,11 @@ pub fn insert_date_time(v: &NSView, long: bool) {
         NSDateFormatterStyle::NoStyle,
         NSDateFormatterStyle::ShortStyle,
     );
-    let z = format!("{time} {date}\0");
+    let z = if crate::prefs::with(|p| p.date_time_reverse) {
+        format!("{date} {time}\0")
+    } else {
+        format!("{time} {date}\0")
+    };
     undo(v, || s(v, SCI_REPLACESEL, 0, z.as_ptr() as isize));
 }
 
@@ -1154,6 +1243,9 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
                 format!("Sort Lines {name} {dir}")
             };
             sort.push(op(&title, SORT + 2 * k as isize + desc as isize));
+            if SORTS[k].1 == Sort::LexIgnoreCase {
+                sort.push(crate::edit_extras::locale_sort_item(mtm, t, desc));
+            }
         }
         if !desc {
             sort.push(sep());
@@ -1192,6 +1284,7 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             cmd | opt | shift,
         ),
         op("Reverse Line Order", REVERSE),
+        op("Randomize Line Order", RANDOM),
     ];
     lines.extend(sort);
     let cases = CASES
@@ -1242,6 +1335,7 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             vec![
                 tagged(mtm, "Date Time (short)", sel!(insertDateTime:), 0, t),
                 tagged(mtm, "Date Time (long)", sel!(insertDateTime:), 1, t),
+                crate::edit_extras::date_time_custom_item(mtm, t),
             ],
         ),
         nested(
@@ -1257,7 +1351,10 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
                 ),
                 tagged(mtm, "Copy Current Filename", sel!(copyPathInfo:), 1, t),
                 tagged(mtm, "Copy Current Dir. Path", sel!(copyPathInfo:), 2, t),
-            ],
+            ]
+            .into_iter()
+            .chain(crate::edit_extras::copy_all_items(mtm, t))
+            .collect(),
         ),
         nested(
             mtm,
@@ -1288,6 +1385,7 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             ],
         ),
         crate::binary::paste_special_menu(mtm, t),
+        crate::edit_extras::on_selection_menu(mtm, t),
         sep(),
         crate::column::multi_select_menu(mtm, t, false),
         crate::column::multi_select_menu(mtm, t, true),
@@ -1302,14 +1400,18 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         nested(
             mtm,
             "Read-Only in Notepad++",
-            vec![item(
+            [item(
                 mtm,
                 "Read-Only on Current Document",
                 sel!(toggleReadOnly:),
                 "",
                 t,
-            )],
+            )]
+            .into_iter()
+            .chain(crate::edit_extras::read_only_all_items(mtm, t))
+            .collect(),
         ),
+        crate::edit_extras::file_read_only_item(mtm, t),
     ]
 }
 
@@ -1356,6 +1458,9 @@ impl crate::App {
     }
 
     pub(crate) fn validate_edit(&self, item: &NSMenuItem) -> Option<bool> {
+        if let Some(r) = self.validate_edit_extras(item) {
+            return Some(r);
+        }
         let a = item.action()?;
         let ours = [
             sel!(sciCommand:),
@@ -1389,6 +1494,7 @@ impl crate::App {
         Some(if a == sel!(toggleReadOnly:) {
             item.setState(state(t.ro));
             !self.ivars().replacing.get()
+                && !self.current().is_some_and(|i| self.tab_file_read_only(i))
         } else if a == sel!(beginEndSelect:) {
             let b = self.ivars().begin_select.get();
             let mine = b.is_some_and(|(_, col)| col == (item.tag() == 1));
@@ -1525,6 +1631,73 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn length_sort_counts_utf16_units_and_is_stable() {
+        let mut v: Vec<&[u8]> = vec![
+            b"ccc",
+            "\u{e9}\u{e9}".as_bytes(),
+            b"a",
+            b"bb",
+            "\u{1F600}".as_bytes(),
+        ];
+        sort_lines(&mut v, Sort::Length, false).unwrap();
+        assert_eq!(
+            v,
+            [
+                &b"a"[..],
+                "\u{e9}\u{e9}".as_bytes(),
+                b"bb",
+                "\u{1F600}".as_bytes(),
+                b"ccc"
+            ]
+        );
+        sort_lines(&mut v, Sort::Length, true).unwrap();
+        assert_eq!(
+            v,
+            [
+                &b"ccc"[..],
+                "\u{e9}\u{e9}".as_bytes(),
+                b"bb",
+                "\u{1F600}".as_bytes(),
+                b"a"
+            ]
+        );
+    }
+
+    #[test]
+    fn column_sorts_use_the_selected_columns() {
+        let t = b"x3 b\nx1 c\nx2 a";
+        let op = |how, cols| line_op_cols(t, b"\n", true, LineOp::Sort(how, false), cols).unwrap();
+        assert_eq!(op(Sort::Lex, (3, 4)), b"x2 a\nx3 b\nx1 c");
+        assert_eq!(op(Sort::Integer, (1, 2)), b"x1 c\nx2 a\nx3 b");
+        assert_eq!(op(Sort::Lex, (3, 3)), b"x2 a\nx3 b\nx1 c");
+        assert_eq!(sort_key(b"abc", (5, 7)), b"");
+        assert_eq!(sort_key(b"abcdef", (2, 9)), b"cdef");
+        assert_eq!(sort_key(b"abc", (0, 0)), b"abc");
+        let r = line_op_cols(
+            b"a 9\nb 10\n",
+            b"\n",
+            false,
+            LineOp::Sort(Sort::Length, true),
+            (2, 4),
+        )
+        .unwrap();
+        assert_eq!(r, b"b 10\na 9\n");
+    }
+
+    #[test]
+    fn random_order_is_a_seeded_permutation() {
+        let t = b"1\n2\n3\n4\n5\n6\n7\n8";
+        let r = |seed| line_op(t, b"\n", true, LineOp::Random(seed)).unwrap();
+        assert_eq!(r(42), r(42));
+        assert_ne!(r(42), r(7));
+        let shuffled = r(42);
+        let mut lines = split(&shuffled, b"\n");
+        assert_ne!(lines, split(t, b"\n"));
+        lines.sort();
+        assert_eq!(lines, split(t, b"\n"));
     }
 
     #[test]

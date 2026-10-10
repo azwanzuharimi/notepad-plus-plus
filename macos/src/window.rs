@@ -218,7 +218,7 @@ impl App {
             });
         let mark = if self.dirty(t) {
             "*"
-        } else if t.ro {
+        } else if t.read_only() {
             " [Read Only]"
         } else {
             ""

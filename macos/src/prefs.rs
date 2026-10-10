@@ -184,6 +184,8 @@ prefs! {
     search_engine: i64 = 2 => "searchEngine" "searchEngineChoice",
     search_engine_custom: String = String::new() => "searchEngine" "searchEngineCustom",
     auto_detect: String = "yes".into() => "Auto-detection" "",
+    date_time_format: String = "yyyy-MM-dd HH:mm:ss".into() => "insertDateTime" "customizedFormat",
+    date_time_reverse: bool = false => "insertDateTime" "reverseDefaultOrder",
 }
 
 // NppGUI::AutocStatus.
@@ -1074,7 +1076,7 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 15] = [
+pub const PAGES: [&str; 16] = [
     "General",
     "Editing 1",
     "Editing 2",
@@ -1087,6 +1089,7 @@ pub const PAGES: [&str; 15] = [
     "Searching",
     "Backup",
     "Auto-Completion",
+    "Multi-Instance & Date",
     "Cloud & Link",
     "Search Engine",
     "MISC.",
@@ -1208,6 +1211,7 @@ struct Ctl {
 
 struct Ui {
     window: Retained<NSWindow>,
+    table: Retained<NSTableView>,
     pages: Retained<NSTabView>,
     _list: Retained<PrefsList>,
     ctls: Vec<Ctl>,
@@ -1827,6 +1831,34 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
             });
         }),
         page(b, &|b, c, _| {
+            let dt = "insertDateTime";
+            b.group(c, "Customize insert Date Time", 420., |b, g| {
+                b.check(
+                    g,
+                    "Reverse default date time order (short & long formats)",
+                    Bind::Check(dt, "reverseDefaultOrder"),
+                );
+                for (f, r) in [
+                    ("yyyy-MM-dd HH:mm:ss", "1985-10-26 16:24:42"),
+                    ("H:m d/M/yyyy", "16:24 26/10/1985"),
+                    ("MMM d, yyyy  tt h:m", "Oct 26, 1985  PM 4:24"),
+                ] {
+                    b.label_at(g, f, 20., 170.).setAlignment(objc2_app_kit::NSTextAlignment::Right);
+                    b.label_at(g, r, 210., 190.);
+                    g.y += 20.;
+                }
+                g.y += 8.;
+                b.label_at(g, "Custom format:", 0., 106.).setAlignment(objc2_app_kit::NSTextAlignment::Right);
+                b.field_at(g, 110., 280., Bind::Text(dt, "customizedFormat"));
+                g.y += 26.;
+                let l = b.label_at(g, "", 110., 290.);
+                if let Some(c) = b.ctls.last_mut() {
+                    c.echo = Some(l);
+                }
+                g.y += 22.;
+            });
+        }),
+        page(b, &|b, c, _| {
             b.group(c, "Clickable Link Settings", 560., |b, g| {
                 b.check(g, "Enable", Bind::UrlOn);
                 b.label(g, "URI customized schemes:", 300.);
@@ -2068,7 +2100,11 @@ fn refresh(app: &App) {
             }
             c.setEnabled(enabled);
             if let Some(e) = &k.echo {
-                e.setStringValue(&ns(&c.integerValue().to_string()));
+                let t = match &k.b {
+                    Bind::Text("insertDateTime", _) => crate::edit_extras::date_time_preview(&p.date_time_format),
+                    _ => c.integerValue().to_string(),
+                };
+                e.setStringValue(&ns(&t));
             }
         }
     });
@@ -2083,6 +2119,19 @@ impl App {
         refresh(self);
         if let Some(w) = UI.with(|u| u.borrow().as_ref().map(|u| u.window.clone())) {
             w.makeKeyAndOrderFront(None);
+        }
+    }
+
+    // IDM_EDIT_CHANGESEARCHENGINE: Preferences with the named page.
+    pub(crate) fn show_preferences_page(&self, name: &str) {
+        self.show_preferences();
+        let Some(row) = PAGES.iter().position(|p| *p == name) else { return };
+        if let Some(t) = UI.with(|u| u.borrow().as_ref().map(|u| u.table.clone())) {
+            t.selectRowIndexes_byExtendingSelection(
+                &objc2_foundation::NSIndexSet::indexSetWithIndex(row),
+                false,
+            );
+            t.scrollRowToVisible(row as isize);
         }
     }
 
@@ -2148,6 +2197,7 @@ impl App {
         );
         Ui {
             window: w,
+            table,
             pages,
             _list: list,
             ctls: b.ctls,
@@ -2547,6 +2597,8 @@ mod tests {
             ("uriCustomizedSchemes", "_uriSchemes"),
             ("searchEngineChoice", "_searchEngineChoice"),
             ("Auto-detection", "_fileAutoDetection"),
+            ("customizedFormat", "_dateTimeFormat"),
+            ("reverseDefaultOrder", "_dateTimeReverseDefaultOrder"),
         ];
         let no_default = [
             "edgeMultiColumnPos",

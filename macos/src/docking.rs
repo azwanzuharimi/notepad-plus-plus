@@ -706,7 +706,7 @@ impl App {
             "name" => s(name),
             "ext" => s(ext),
             _ => {
-                let symbol = if t.ro {
+                let symbol = if t.read_only() {
                     "lock.fill"
                 } else if self.dirty(&t) {
                     "pencil.circle.fill"

@@ -341,9 +341,10 @@ impl App {
             let mut tabs = self.ivars().tabs.borrow_mut();
             let Some(t) = tabs.get_mut(i) else { return };
             t.ro = on;
-            t.view.clone()
+            (t.view.clone(), t.read_only())
         };
-        sci::set_read_only(&view, on || self.ivars().replacing.get());
+        let (view, ro) = view;
+        sci::set_read_only(&view, ro || self.ivars().replacing.get());
         self.refresh_title(i);
     }
 

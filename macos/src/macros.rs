@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 61] = [
+const NOT_RECORDED: [&str; 67] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -101,6 +101,12 @@ const NOT_RECORDED: [&str; 61] = [
     "IDM_LANG_OPENUDLDIR",
     "IDM_LANG_UDLCOLLECTION_PROJECT_SITE",
     "IDM_SETTING_PREFERENCE",
+    "IDM_EDIT_PASTE_AS_HTML",
+    "IDM_EDIT_PASTE_AS_RTF",
+    "IDM_EDIT_OPENSELECTEDFILETOEDIT",
+    "IDM_EDIT_OPENSELECTEDFILEFOLDERINEXPLORER",
+    "IDM_EDIT_SEARCHONINTERNET",
+    "IDM_EDIT_CHANGESEARCHENGINE",
     "IDM_VIEW_POSTIT",
     "IDM_VIEW_DISTRACTIONFREE",
     "IDM_VIEW_HIDELINES",
@@ -279,6 +285,7 @@ fn menu_cmds() -> Vec<Cmd> {
         ("INTEGER", 42061),
         ("DECIMALCOMMA", 42063),
         ("DECIMALDOT", 42065),
+        ("LENGTH", 42104),
     ];
     for (k, (n, id)) in sorts.into_iter().enumerate() {
         for (d, dir) in ["ASCENDING", "DESCENDING"].into_iter().enumerate() {
@@ -320,6 +327,22 @@ fn menu_cmds() -> Vec<Cmd> {
     for (k, n) in multi.into_iter().enumerate() {
         v.push((format!("IDM_EDIT_MULTISELECT{n}"), 42090 + k as i32, "multiSelect:", k as isize));
     }
+    v.push(("IDM_EDIT_SORTLINES_RANDOMLY".into(), 42078, "editOp:", 12));
+    v.push(("IDM_EDIT_SORTLINES_LOCALE_ASCENDING".into(), 42100, "sortLocale:", 0));
+    v.push(("IDM_EDIT_SORTLINES_LOCALE_DESCENDING".into(), 42101, "sortLocale:", 1));
+    v.push(("IDM_EDIT_INSERT_DATETIME_CUSTOMIZED".into(), 42086, "insertDateTimeCustom:", -1));
+    v.push(("IDM_EDIT_COPY_ALL_NAMES".into(), 42087, "copyAllNames:", 0));
+    v.push(("IDM_EDIT_COPY_ALL_PATHS".into(), 42088, "copyAllNames:", 1));
+    v.push(("IDM_EDIT_SETREADONLYFORALLDOCS".into(), 42102, "readOnlyAll:", 1));
+    v.push(("IDM_EDIT_CLEARREADONLYFORALLDOCS".into(), 42103, "readOnlyAll:", 0));
+    v.push(("IDM_EDIT_TOGGLESYSTEMREADONLY".into(), 42033, "toggleFileReadOnly:", -1));
+    v.push(("IDM_EDIT_PASTE_AS_HTML".into(), 42038, "pasteMarkup:", 0));
+    v.push(("IDM_EDIT_PASTE_AS_RTF".into(), 42039, "pasteMarkup:", 1));
+    v.push(("IDM_EDIT_OPENSELECTEDFILETOEDIT".into(), 42073, "onSelection:", 0));
+    v.push(("IDM_EDIT_OPENSELECTEDFILEFOLDERINEXPLORER".into(), 42074, "onSelection:", 1));
+    v.push(("IDM_EDIT_SEARCHONINTERNET".into(), 42075, "onSelection:", 2));
+    v.push(("IDM_EDIT_CHANGESEARCHENGINE".into(), 42076, "onSelection:", 3));
+    v.push(("IDM_EDIT_REDACT_SELECTION".into(), 42106, "redactSelection:", -1));
     v.push(("IDM_EDIT_COLUMNMODE".into(), 42034, "columnEditor:", -1));
     v.push(("IDM_EDIT_COLUMNMODETIP".into(), 42037, "columnModeTip:", -1));
     v.push(("IDM_EDIT_COPY_BINARY".into(), 42048, "copyBinary:", 0));
@@ -1164,6 +1187,12 @@ mod tests {
         assert_eq!(menu_step("selectTab:", 9), None);
         assert_eq!(menu_action(44116), Some(("selectTab:", 9)));
         assert_eq!(menu_step("unfoldLevel:", 7), Some(Step::menu(44068)));
+        assert_eq!(menu_step("editOp:", 12), Some(Step::menu(42078)));
+        assert_eq!(menu_step("editOp:", 31), Some(Step::menu(42105)));
+        assert_eq!(menu_step("sortLocale:", 1), Some(Step::menu(42101)));
+        assert_eq!(menu_step("insertDateTimeCustom:", 0), Some(Step::menu(42086)));
+        assert_eq!(menu_step("onSelection:", 2), None);
+        assert_eq!(menu_step("pasteMarkup:", 0), None);
     }
 
     #[test]
@@ -1186,6 +1215,7 @@ mod tests {
             include_str!("view.rs"),
             include_str!("fileops.rs"),
             include_str!("edit.rs"),
+            include_str!("edit_extras.rs"),
             include_str!("search_extras.rs"),
             include_str!("language.rs"),
             include_str!("column.rs"),
@@ -1244,6 +1274,8 @@ mod tests {
             (include_str!("edit.rs"), "REVERSE: isize = 9;"),
             (include_str!("edit.rs"), "INDENT: isize = 10;"),
             (include_str!("edit.rs"), "OUTDENT: isize = 11;"),
+            (include_str!("edit.rs"), "RANDOM: isize = 12;"),
+            (include_str!("edit_extras.rs"), "OPEN_FILE: isize = 0;\nconst OPEN_FOLDER: isize = 1;\nconst SEARCH_INTERNET: isize = 2;\nconst CHANGE_SEARCH_ENGINE: isize = 3;"),
             (include_str!("edit.rs"), "SORT: isize = 20;"),
             (include_str!("edit.rs"), "CASE: isize = 40;"),
             (include_str!("edit.rs"), "TRIM_TRAIL: isize = 60;"),
@@ -1254,7 +1286,7 @@ mod tests {
             (include_str!("edit.rs"), "TAB_TO_SPACE: isize = 65;"),
             (include_str!("edit.rs"), "SPACE_TO_TAB: isize = 66;"),
             (include_str!("edit.rs"), "SPACE_TO_TAB_LEAD: isize = 67;"),
-            (include_str!("edit.rs"), "(\"Lexicographically\", Sort::Lex),\n    (\"Lex. %s Ignoring Case\", Sort::LexIgnoreCase),\n    (\"As Integers\", Sort::Integer),\n    (\"As Decimals (Comma)\", Sort::DecimalComma),\n    (\"As Decimals (Dot)\", Sort::DecimalDot),"),
+            (include_str!("edit.rs"), "(\"Lexicographically\", Sort::Lex),\n    (\"Lex. %s Ignoring Case\", Sort::LexIgnoreCase),\n    (\"As Integers\", Sort::Integer),\n    (\"As Decimals (Comma)\", Sort::DecimalComma),\n    (\"As Decimals (Dot)\", Sort::DecimalDot),\n    (\"By Length\", Sort::Length),"),
             (include_str!("edit.rs"), "Case::Upper),\n    (\"lowercase\", Case::Lower),\n    (\"Proper Case\", Case::ProperForce),\n    (\"Proper Case (blend)\", Case::ProperBlend),\n    (\"Sentence case\", Case::SentenceForce),\n    (\"Sentence case (blend)\", Case::SentenceBlend),\n    (\"iNVERT cASE\", Case::Invert),\n    (\"ranDOm CasE\", Case::Random),"),
             (include_str!("comment.rs"), "(\"Toggle Single Line Comment\", Cmd::Toggle),\n    (\"Single Line Comment\", Cmd::Comment),\n    (\"Single Line Uncomment\", Cmd::Uncomment),\n    (\"Block Comment\", Cmd::Stream),\n    (\"Block Uncomment\", Cmd::StreamUncomment),"),
             (include_str!("mark.rs"), "STYLE_ALL: isize = 0;"),
