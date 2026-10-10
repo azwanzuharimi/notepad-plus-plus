@@ -6,10 +6,13 @@ mod encoding;
 mod fileops;
 mod lang;
 mod language;
+mod macros;
 mod panel;
+mod run;
 mod sci;
 mod search;
 mod search_extras;
+mod shortcuts;
 mod tools;
 mod view;
 
@@ -181,6 +184,9 @@ define_class!(
         fn notification(&self, scn: *const c_void) {
             let h = unsafe { &*(scn as *const NotifyHeader) };
             self.margin_click(scn);
+            if h.code == macros::SCN_MACRORECORD {
+                self.macro_record(scn);
+            }
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 let n = self.ivars().tabs.borrow().len();
                 (0..n).for_each(|i| self.refresh_title(i));
@@ -699,6 +705,93 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(macroToggleRecord:))]
+        fn macro_toggle_record_action(&self, _s: Option<&AnyObject>) {
+            self.macro_toggle_record();
+        }
+
+        #[unsafe(method(macroPlayback:))]
+        fn macro_playback_action(&self, _s: Option<&AnyObject>) {
+            self.macro_playback();
+        }
+
+        #[unsafe(method(macroSave:))]
+        fn macro_save_action(&self, _s: Option<&AnyObject>) {
+            self.macro_save();
+        }
+
+        #[unsafe(method(macroShowMulti:))]
+        fn macro_show_multi_action(&self, _s: Option<&AnyObject>) {
+            self.macro_show_multi();
+        }
+
+        #[unsafe(method(macroRunMode:))]
+        fn macro_run_mode_action(&self, _s: Option<&AnyObject>) {
+            self.macro_run_mode();
+        }
+
+        #[unsafe(method(macroRunMulti:))]
+        fn macro_run_multi_action(&self, _s: Option<&AnyObject>) {
+            self.macro_run_multi();
+        }
+
+        #[unsafe(method(macroRunSaved:))]
+        fn macro_run_saved_action(&self, s: &NSMenuItem) {
+            self.macro_run_saved(s);
+        }
+
+        #[unsafe(method(macroLoadError:))]
+        fn macro_load_error_action(&self, _s: Option<&AnyObject>) {
+            self.macro_show_load_error();
+        }
+
+        #[unsafe(method(macroMenuWillSend:))]
+        fn macro_menu_will_send_action(&self, _n: &NSNotification) {
+            self.macro_menu_will_send();
+        }
+
+        #[unsafe(method(macroMenuDidSend:))]
+        fn macro_menu_did_send_action(&self, n: &NSNotification) {
+            self.macro_menu_did_send(n);
+        }
+
+        #[unsafe(method(runShow:))]
+        fn run_show_action(&self, _s: Option<&AnyObject>) {
+            self.run_show();
+        }
+
+        #[unsafe(method(runExecute:))]
+        fn run_execute_action(&self, _s: Option<&AnyObject>) {
+            self.run_execute();
+        }
+
+        #[unsafe(method(runSave:))]
+        fn run_save_action(&self, _s: Option<&AnyObject>) {
+            self.run_save();
+        }
+
+        #[unsafe(method(runBrowse:))]
+        fn run_browse_action(&self, _s: Option<&AnyObject>) {
+            self.run_browse();
+        }
+
+        #[unsafe(method(runVariables:))]
+        fn run_variables_action(&self, _s: Option<&AnyObject>) {
+            self.run_variables();
+        }
+
+        #[unsafe(method(runInsertVariable:))]
+        fn run_insert_variable_action(&self, s: &NSMenuItem) {
+            self.run_insert_variable(s);
+        }
+
+        #[unsafe(method(runUserCommand:))]
+        fn run_user_command_action(&self, s: &NSMenuItem) {
+            self.run_user_command(s);
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -1158,6 +1251,7 @@ impl App {
             encoding::detect_eol(text).unwrap_or(encoding::SC_EOL_CRLF),
         );
         sci::set_read_only(&view, self.ivars().replacing.get());
+        self.macro_arm(&view);
         let lang = path
             .as_deref()
             .and_then(|p| lang::language_for_path(cfg(), p));
@@ -1534,6 +1628,7 @@ fn main() {
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     submenu(mtm, &bar, "Language", language::language_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
+    macros::menus(mtm, &bar, t);
     submenu(mtm, &bar, "?", tools::help_menu(mtm, t));
     if let Some(m) = bar.itemAtIndex(0).and_then(|i| i.submenu()) {
         m.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), 0);
