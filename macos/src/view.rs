@@ -746,6 +746,15 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         sep(),
         item(mtm, "Summary...", sel!(summary:), "", t),
         sep(),
+        nested(
+            mtm,
+            "Project Panels",
+            vec![
+                item(mtm, "Project Panel 1", sel!(toggleProjectPanel1:), "", t),
+                item(mtm, "Project Panel 2", sel!(toggleProjectPanel2:), "", t),
+                item(mtm, "Project Panel 3", sel!(toggleProjectPanel3:), "", t),
+            ],
+        ),
         item(mtm, "Folder as Workspace", sel!(toggleFolderAsWorkspace:), "", t),
         item(mtm, "Document Map", sel!(toggleDocMap:), "", t),
         item(mtm, "Document List", sel!(toggleDocList:), "", t),

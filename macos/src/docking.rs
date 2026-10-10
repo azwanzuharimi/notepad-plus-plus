@@ -27,6 +27,7 @@ pub const DOC_MAP: isize = 2;
 pub const FOLDERS: isize = 3;
 pub const CLIPBOARD: isize = 4;
 pub const CHARS: isize = 5;
+pub const PROJECTS: [isize; 3] = [6, 7, 8];
 const TITLE_H: f64 = 24.;
 const TOOLBAR_H: f64 = 28.;
 const TAB_H: f64 = 26.;
@@ -35,13 +36,16 @@ const WIDTH: f64 = 250.;
 const PARSE_LIMIT: isize = 10 * 1024 * 1024;
 
 // Title and default side (0 left, 1 right) of each panel, as Notepad_plus.cpp launch* sets DWS_DF_CONT_LEFT or DWS_DF_CONT_RIGHT.
-const PANELS: [(&str, usize); 6] = [
+const PANELS: [(&str, usize); 9] = [
     ("Document List", 0),
     ("Function List", 1),
     ("Document Map", 1),
     ("Folder as Workspace", 0),
     ("Clipboard History", 1),
     ("ASCII Codes Insertion Panel", 1),
+    ("Project Panel 1", 0),
+    ("Project Panel 2", 0),
+    ("Project Panel 3", 0),
 ];
 
 struct Item {
@@ -66,7 +70,7 @@ pub struct Dock {
     outer: Retained<NSSplitView>,
     sides: [Side; 2],
     widths: Cell<[f64; 2]>,
-    contents: RefCell<[Option<Retained<NSView>>; 6]>,
+    contents: RefCell<[Option<Retained<NSView>>; 9]>,
     pub(crate) target: Retained<PanelTarget>,
     timer: RefCell<Option<Retained<NSTimer>>>,
     docs: Retained<NSTableView>,
@@ -82,6 +86,7 @@ pub struct Dock {
     pub(crate) folders: OnceCell<crate::filebrowser::Folders>,
     pub(crate) clips: OnceCell<crate::cliphistory::Clips>,
     pub(crate) chars: OnceCell<crate::charpanel::Chars>,
+    pub(crate) projects: [OnceCell<crate::project::Panel>; 3],
 }
 
 define_class!(
@@ -413,7 +418,17 @@ impl App {
             outer: outer.clone(),
             sides,
             widths: Cell::new([WIDTH, WIDTH]),
-            contents: RefCell::new([Some(left), Some(right), None, None, None, None]),
+            contents: RefCell::new([
+                Some(left),
+                Some(right),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]),
             target,
             timer: RefCell::new(None),
             docs,
@@ -429,6 +444,7 @@ impl App {
             folders: OnceCell::new(),
             clips: OnceCell::new(),
             chars: OnceCell::new(),
+            projects: Default::default(),
         });
         outer
     }
@@ -464,6 +480,9 @@ impl App {
             (sel!(toggleFolderAsWorkspace:), FOLDERS),
             (sel!(toggleClipboardHistory:), CLIPBOARD),
             (sel!(toggleCharPanel:), CHARS),
+            (sel!(toggleProjectPanel1:), PROJECTS[0]),
+            (sel!(toggleProjectPanel2:), PROJECTS[1]),
+            (sel!(toggleProjectPanel3:), PROJECTS[2]),
         ]
         .into_iter()
         .find(|(a, _)| *a == action)?
@@ -473,7 +492,9 @@ impl App {
 
     // NppCommands.cpp IDM_VIEW_DOCLIST, IDM_VIEW_FUNC_LIST, IDM_VIEW_DOC_MAP and the other panel commands: close an open panel, or open it.
     pub(crate) fn toggle_panel(&self, id: isize) {
-        if self.panel_visible(id) {
+        if let Some(k) = PROJECTS.iter().position(|&p| p == id) {
+            self.project_toggle(k);
+        } else if self.panel_visible(id) {
             self.dock_close_panel(id);
         } else {
             self.dock_open_panel(id);
@@ -546,6 +567,7 @@ impl App {
             FOLDERS => self.folders_build(),
             CLIPBOARD => self.clips_build(),
             CHARS => self.chars_build(),
+            6..=8 => self.project_build(id as usize - 6),
             _ => return None,
         };
         d.contents.borrow_mut()[id as usize] = Some(c.clone());

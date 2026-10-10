@@ -801,11 +801,15 @@ pub fn replace_file(f: &Path, o: &Opts, out: &mut FifOut) -> Result<(), String> 
 
 // Port of Notepad_plus::findInFilelist and replaceInFilelist: an open file uses its tab, not the disk copy.
 pub fn find_in_files(a: &FifArgs) -> Result<FifOut, String> {
-    let files = walk(&a.dir, &patterns(&a.filters), a.sub, a.hidden);
+    find_in_list(a, &walk(&a.dir, &patterns(&a.filters), a.sub, a.hidden))
+}
+
+// Notepad_plus::findInFilelist on a given list of files; Find in Projects uses it too.
+pub fn find_in_list(a: &FifArgs, files: &[PathBuf]) -> Result<FifOut, String> {
     let mut out = FifOut::default();
     let mut body = vec![];
     let mut nfiles = 0;
-    for f in &files {
+    for f in files {
         let c = canonical(f);
         let tab = a.open.iter().find(|(p, _)| *p == c);
         if a.replace {
@@ -845,8 +849,17 @@ pub fn spawn_find_in_files(
     a: FifArgs,
     done: impl FnOnce(FifArgs, Result<FifOut, String>) + Send + 'static,
 ) {
+    spawn_search(a, find_in_files, done);
+}
+
+// Runs a search job of Find in Files on a worker thread; `done` runs on that thread.
+pub fn spawn_search(
+    a: FifArgs,
+    job: impl FnOnce(&FifArgs) -> Result<FifOut, String> + Send + 'static,
+    done: impl FnOnce(FifArgs, Result<FifOut, String>) + Send + 'static,
+) {
     std::thread::spawn(move || {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| find_in_files(&a)))
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&a)))
             .unwrap_or_else(|_| Err("Find in Files stopped because of an internal error.".into()));
         done(a, r);
     });

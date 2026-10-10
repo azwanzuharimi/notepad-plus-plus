@@ -402,6 +402,7 @@ pub(crate) fn save_config() -> Result<(), String> {
         .and_then(|old| write_history(old.as_deref(), &rec))
         .and_then(|x| crate::prefs::patch_config(Some(&x)))
         .and_then(|x| crate::filebrowser::patch_config(&x))
+        .and_then(|x| crate::project::patch_config(&x))
         .and_then(|x| write_file(&path, &x, false))
 }
 

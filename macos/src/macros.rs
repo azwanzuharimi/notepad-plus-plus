@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 115] = [
+const NOT_RECORDED: [&str; 118] = [
     "IDM_FILE_PRINT",
     "IDM_FILE_PRINTNOW",
     "IDM_EDIT_CUT",
@@ -92,6 +92,9 @@ const NOT_RECORDED: [&str; 115] = [
     "IDM_VIEW_FUNC_LIST",
     "IDM_VIEW_DOC_MAP",
     "IDM_VIEW_FILEBROWSER",
+    "IDM_VIEW_PROJECT_PANEL_1",
+    "IDM_VIEW_PROJECT_PANEL_2",
+    "IDM_VIEW_PROJECT_PANEL_3",
     "IDM_FILE_OPENFOLDERASWORKSPACE",
     "IDM_FILE_CONTAININGFOLDERASWORKSPACE",
     "IDM_EDIT_CHAR_PANEL",
@@ -283,6 +286,9 @@ pub(crate) fn menu_cmds() -> Vec<Cmd> {
         ("IDM_SETTING_EDITCONTEXTMENU", 48018, "editContextMenu:", ANY),
         ("IDM_VIEW_DOC_MAP", 44080, "toggleDocMap:", ANY),
         ("IDM_VIEW_FILEBROWSER", 44085, "toggleFolderAsWorkspace:", ANY),
+        ("IDM_VIEW_PROJECT_PANEL_1", 44081, "toggleProjectPanel1:", ANY),
+        ("IDM_VIEW_PROJECT_PANEL_2", 44082, "toggleProjectPanel2:", ANY),
+        ("IDM_VIEW_PROJECT_PANEL_3", 44083, "toggleProjectPanel3:", ANY),
         ("IDM_FILE_OPENFOLDERASWORKSPACE", 41022, "openFolderAsWorkspace:", ANY),
         ("IDM_FILE_CONTAININGFOLDERASWORKSPACE", 41025, "containingFolderAsWorkspace:", ANY),
         ("IDM_EDIT_CHAR_PANEL", 42051, "toggleCharPanel:", ANY),
