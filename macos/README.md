@@ -14,6 +14,11 @@ Not affiliated with the Notepad++ project.
 - As in Notepad++, the selection and the Generate... text stop at the first NUL byte. The selection hash uses the UTF-8 bytes of the tab, also when the file encoding is different.
 - In Generate..., the text box uses LF line ends. A hash of more than one line is different from Notepad++ on Windows (CR LF). Generate from files... skips a file larger than 4 GiB.
 - ? menu: Command Line Arguments, the four Notepad++ links, Debug Info, and About. About is also in the app menu. There is no Update Notepad++ or Set Updater Proxy.
+- File menu: Open Containing Folder (Finder, Terminal), Open in Default Viewer, Reload from Disk, Save a Copy As, Save All, Rename, Close All, Close Multiple Documents, and Move to Trash ("Move to Recycle Bin" in Notepad++).
+- One file opens in one tab only. Paths are compared after symbolic links and `..` are resolved. Save As, Save a Copy As, and Rename refuse a file that is open in another tab, as in Notepad++.
+- Rename also refuses a file that is open in another tab. Notepad++ does not check this.
+- Close All and the Close Multiple Documents items ask about each modified tab, like Close. Cancel stops the operation, and no tab closes.
+- Save All has no "Always yes" button, because there are no Preferences yet. Close All but Pinned Documents and Folder as Workspace are not in the menu.
 
 2026-10-08:
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod config;
 mod encoding;
+mod fileops;
 mod lang;
 mod panel;
 mod sci;
@@ -16,12 +17,10 @@ use objc2_app_kit::{
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControlStateValueOff,
     NSControlStateValueOn, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSSavePanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate,
-    NSTabViewItem, NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSOpenPanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
+    NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
-use objc2_foundation::{
-    NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
-};
+use objc2_foundation::{NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use panel::{Controls, Form};
 use search::{FifArgs, FifOut, Line, Next, Wrap};
 use std::cell::{Cell, OnceCell, RefCell};
@@ -164,17 +163,9 @@ define_class!(
             if !self.confirm_close(i) {
                 return;
             }
-            let Some(tab) = self.tab(i) else { return };
-            self.ivars()
-                .tabs
-                .borrow_mut()
-                .retain(|t| !std::ptr::eq(&*t.item, &*tab.item));
-            self.tab_view().removeTabViewItem(&tab.item);
-            if self.ivars().tabs.borrow().is_empty() {
-                self.ivars().untitled.set(0);
-                self.add_tab(None, Enc::Utf8, b"", false);
+            if let Some(tab) = self.tab(i) {
+                self.drop_tabs(&[tab.item]);
             }
-            self.focus();
         }
 
         #[unsafe(method(notification:))]
@@ -207,7 +198,7 @@ define_class!(
             let k = marks.iter().position(|&(s, e)| s <= at && at <= e).unwrap_or(0);
             self.open_path(&path);
             let tab = self.current().and_then(|i| self.tab(i));
-            if let Some(t) = tab.filter(|t| t.path.as_deref() == Some(&path)) {
+            if let Some(t) = tab.filter(|t| t.path.as_deref().is_some_and(|p| fileops::same_file(p, &path))) {
                 sci::select(&t.view, ranges[k]);
                 self.ivars().window.get().unwrap().makeKeyAndOrderFront(None);
                 self.focus();
@@ -485,6 +476,54 @@ define_class!(
         #[unsafe(method(showDebugInfo:))]
         fn show_debug_info_action(&self, _s: Option<&AnyObject>) {
             self.show_debug_info();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(reloadFromDisk:))]
+        fn reload_from_disk_action(&self, _s: Option<&AnyObject>) {
+            self.reload_from_disk();
+        }
+
+        #[unsafe(method(saveCopyAs:))]
+        fn save_copy_as_action(&self, _s: Option<&AnyObject>) {
+            self.save_copy_as();
+        }
+
+        #[unsafe(method(saveAll:))]
+        fn save_all_action(&self, _s: Option<&AnyObject>) {
+            self.save_all();
+        }
+
+        #[unsafe(method(renameFile:))]
+        fn rename_file_action(&self, _s: Option<&AnyObject>) {
+            self.rename_file();
+        }
+
+        #[unsafe(method(closeMultiple:))]
+        fn close_multiple_action(&self, s: Option<&AnyObject>) {
+            let tag: isize = s.map_or(0, |s| unsafe { msg_send![s, tag] });
+            self.close_multiple(tag);
+        }
+
+        #[unsafe(method(moveToTrash:))]
+        fn move_to_trash_action(&self, _s: Option<&AnyObject>) {
+            self.move_to_trash();
+        }
+
+        #[unsafe(method(openFolderFinder:))]
+        fn open_folder_finder(&self, _s: Option<&AnyObject>) {
+            self.open_folder(false);
+        }
+
+        #[unsafe(method(openFolderTerminal:))]
+        fn open_folder_terminal(&self, _s: Option<&AnyObject>) {
+            self.open_folder(true);
+        }
+
+        #[unsafe(method(openDefaultViewer:))]
+        fn open_default_viewer_action(&self, _s: Option<&AnyObject>) {
+            self.open_default_viewer();
         }
     }
 
@@ -909,13 +948,7 @@ impl App {
     }
 
     fn open_path(&self, path: &Path) {
-        let existing = self
-            .ivars()
-            .tabs
-            .borrow()
-            .iter()
-            .position(|t| t.path.as_deref() == Some(path));
-        if let Some(t) = existing.and_then(|i| self.tab(i)) {
+        if let Some(t) = self.find_open(path, None).and_then(|i| self.tab(i)) {
             self.tab_view().selectTabViewItem(Some(&t.item));
             return;
         }
@@ -981,6 +1014,9 @@ impl App {
         let Some(action) = item.action() else {
             return true;
         };
+        if let Some(on) = self.validate_file(action) {
+            return on;
+        }
         let tab = self.current().and_then(|i| self.tab(i));
         let checked = match &tab {
             Some(t) if action == sel!(encodeIn:) => enc_tag(t.enc) == item.tag(),
@@ -1078,18 +1114,36 @@ impl App {
         let Some(tab) = self.tab(i) else { return false };
         let path = match tab.path.clone().filter(|_| !ask) {
             Some(p) => p,
-            None => {
-                let p = NSSavePanel::savePanel(self.mtm());
-                p.setNameFieldStringValue(&NSString::from_str(&tab.name));
-                if p.runModal() != NSModalResponseOK {
-                    return false;
-                }
-                match p.URL().and_then(|u: Retained<NSURL>| u.path()) {
-                    Some(s) => PathBuf::from(s.to_string()),
-                    None => return false,
-                }
-            }
+            None => match self.ask_save_path(i, "Save As") {
+                Some(p) => p,
+                None => return false,
+            },
         };
+        let Some(enc) = self.write_tab(&tab, &path) else {
+            return false;
+        };
+        let renamed = tab.path.as_deref() != Some(&path);
+        if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
+            t.name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            t.path = Some(path.clone());
+            t.enc = enc;
+            t.enc_dirty = false;
+            t.lost = false;
+        }
+        sci::set_save_point(&tab.view);
+        if renamed {
+            sci::apply_language(&tab.view, cfg(), lang::language_for_path(cfg(), &path));
+        }
+        self.refresh_title(i);
+        self.update_status();
+        true
+    }
+
+    fn write_tab(&self, tab: &Tab, path: &Path) -> Option<Enc> {
         let text = sci::bytes(&tab.view);
         let mut enc = tab.enc;
         let bytes = match encoding::encode(&text, enc, false) {
@@ -1110,38 +1164,20 @@ impl App {
                 if r == NSAlertFirstButtonReturn {
                     enc = Enc::Utf8;
                 } else if r != NSAlertSecondButtonReturn {
-                    return false;
+                    return None;
                 }
                 encoding::encode(&text, enc, true).unwrap_or_default()
             }
         };
-        if let Err(e) = std::fs::write(&path, bytes) {
+        if let Err(e) = std::fs::write(path, bytes) {
             self.alert(
                 &format!("Cannot save {}", path.display()),
                 &e.to_string(),
                 &["OK"],
             );
-            return false;
+            return None;
         }
-        let renamed = tab.path.as_deref() != Some(&path);
-        if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
-            t.name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            t.path = Some(path.clone());
-            t.enc = enc;
-            t.enc_dirty = false;
-            t.lost = false;
-        }
-        sci::set_save_point(&tab.view);
-        if renamed {
-            sci::apply_language(&tab.view, cfg(), lang::language_for_path(cfg(), &path));
-        }
-        self.refresh_title(i);
-        self.update_status();
-        true
+        Some(enc)
     }
 
     fn confirm_close(&self, i: usize) -> bool {
@@ -1298,18 +1334,7 @@ fn main() {
         "Notepad++",
         vec![item(mtm, "Quit Notepad++", sel!(terminate:), "q", None)],
     );
-    submenu(
-        mtm,
-        &bar,
-        "File",
-        vec![
-            item(mtm, "New", sel!(newDocument:), "n", t),
-            item(mtm, "Open...", sel!(openDocument:), "o", t),
-            item(mtm, "Save", sel!(saveDocument:), "s", t),
-            item(mtm, "Save As...", sel!(saveDocumentAs:), "S", t),
-            item(mtm, "Close", sel!(closeTab:), "w", t),
-        ],
-    );
+    submenu(mtm, &bar, "File", fileops::file_menu(mtm, t));
     submenu(
         mtm,
         &bar,
