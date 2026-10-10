@@ -19,6 +19,12 @@ Not affiliated with the Notepad++ project.
 - Rename also refuses a file that is open in another tab. Notepad++ does not check this.
 - Close All and the Close Multiple Documents items ask about each modified tab, like Close. Cancel stops the operation, and no tab closes.
 - Save All has no "Always yes" button, because there are no Preferences yet. Close All but Pinned Documents and Folder as Workspace are not in the menu.
+- View menu: Always on Top, Toggle Full Screen Mode (Ctrl+Cmd+F), Show Symbol (7 items), Zoom (Cmd+=, Cmd+-, Cmd+0), Tab (Cmd+1..9, Cmd+Shift+] and [, move tab), Word wrap, fold commands, and Summary. The options apply to all tabs and to new tabs. They are not saved when the app quits.
+- Code folding: a fold margin with the Notepad++ box markers, the "Fold" and "Fold margin" colours, and the Notepad++ fold properties for each language. Click a fold symbol to fold or unfold. Fold All is Opt+Cmd+0, Fold Level N is Opt+Cmd+N, Fold Current Level is Ctrl+Opt+F. The Unfold items add Ctrl (Unfold Current Level adds Shift), because AppKit does not match Shift with a digit.
+- Tab width is 4 with tabs, or the `tabSettings` of the language (Python and YAML use 4 spaces).
+- The Search results panel also gets a fold margin, as in Notepad++.
+- No Text Direction RTL or LTR: Scintilla on macOS stores `SC_BIDIRECTIONAL_R2L` but does not draw right to left. No Post-It, Distraction Free Mode, View Current File in, Hide Lines, Synchronize scrolling, or Monitoring.
+- Summary counts characters in UTF-8 for all encodings. Notepad++ uses a byte count for ANSI and UTF-16 files. Pinch zoom changes only the current tab.
 
 2026-10-08:
 

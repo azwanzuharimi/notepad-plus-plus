@@ -7,6 +7,7 @@ mod panel;
 mod sci;
 mod search;
 mod tools;
+mod view;
 
 use encoding::Enc;
 use objc2::rc::Retained;
@@ -84,6 +85,7 @@ struct Ivars {
     find_ui: OnceCell<FindUi>,
     fif_ui: OnceCell<FifUi>,
     status: OnceCell<Vec<Retained<NSTextField>>>,
+    view: Cell<view::Opts>,
 }
 
 #[repr(C)]
@@ -524,6 +526,63 @@ define_class!(
         #[unsafe(method(openDefaultViewer:))]
         fn open_default_viewer_action(&self, _s: Option<&AnyObject>) {
             self.open_default_viewer();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(alwaysOnTop:))]
+        fn always_on_top_action(&self, _s: Option<&AnyObject>) {
+            self.always_on_top();
+        }
+
+        #[unsafe(method(fullScreen:))]
+        fn full_screen_action(&self, _s: Option<&AnyObject>) {
+            self.full_screen();
+        }
+
+        #[unsafe(method(viewOption:))]
+        fn view_option_action(&self, s: &NSMenuItem) {
+            self.view_option(s.tag() as usize);
+        }
+
+        #[unsafe(method(zoom:))]
+        fn zoom_action(&self, s: &NSMenuItem) {
+            self.zoom(s.tag());
+        }
+
+        #[unsafe(method(selectTab:))]
+        fn select_tab_action(&self, s: &NSMenuItem) {
+            self.select_tab(s.tag() as usize);
+        }
+
+        #[unsafe(method(moveTab:))]
+        fn move_tab_action(&self, s: &NSMenuItem) {
+            self.move_tab(s.tag() as usize);
+        }
+
+        #[unsafe(method(foldAll:))]
+        fn fold_all_action(&self, s: &NSMenuItem) {
+            self.fold_all(s.tag() == 1);
+        }
+
+        #[unsafe(method(foldCurrent:))]
+        fn fold_current_action(&self, s: &NSMenuItem) {
+            self.fold_current(s.tag() == 1);
+        }
+
+        #[unsafe(method(foldLevel:))]
+        fn fold_level_action(&self, s: &NSMenuItem) {
+            self.fold_level(s.tag() as usize, false);
+        }
+
+        #[unsafe(method(unfoldLevel:))]
+        fn unfold_level_action(&self, s: &NSMenuItem) {
+            self.fold_level(s.tag() as usize, true);
+        }
+
+        #[unsafe(method(summary:))]
+        fn summary_action(&self, _s: Option<&AnyObject>) {
+            self.summary();
         }
     }
 
@@ -980,6 +1039,7 @@ impl App {
             .as_deref()
             .and_then(|p| lang::language_for_path(cfg(), p));
         sci::apply_language(&view, cfg(), lang);
+        self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()));
         let name = match &path {
             Some(p) => p
                 .file_name()
@@ -1016,6 +1076,9 @@ impl App {
         };
         if let Some(on) = self.validate_file(action) {
             return on;
+        }
+        if self.validate_view(item) {
+            return true;
         }
         let tab = self.current().and_then(|i| self.tab(i));
         let checked = match &tab {
@@ -1394,6 +1457,7 @@ fn main() {
             item(mtm, "Go to...", sel!(goToLine:), "l", t),
         ],
     );
+    submenu(mtm, &bar, "View", view::view_menu(mtm, t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
     submenu(mtm, &bar, "?", tools::help_menu(mtm, t));
