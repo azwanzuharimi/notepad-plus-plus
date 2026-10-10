@@ -282,12 +282,45 @@ pub fn write_history(existing: Option<&str>, rec: &Recent) -> Result<String, Str
         }
         w.write_event(ev).map_err(|e| e.to_string())?;
     }
-    String::from_utf8(w.into_inner()).map_err(|e| e.to_string())
+    let out = String::from_utf8(w.into_inner()).map_err(|e| e.to_string())?;
+    Ok(crate::prefs::keep_bom(src, out))
 }
 
-// Common.cpp BuildMenuFileName with the full path; macOS menus have no mnemonic.
-pub fn menu_title(i: usize, p: &Path) -> String {
-    format!("{}: {}", i + 1, p.display())
+// Common.cpp BuildMenuFileName: `len` < 0 is the full path, 0 the file name, else a compacted path; macOS menus have no mnemonic.
+pub fn menu_title(i: usize, p: &Path, len: i64) -> String {
+    let full = p.to_string_lossy();
+    let name = match len {
+        0 => p.file_name().map_or(full.clone(), |n| n.to_string_lossy()).into_owned(),
+        n if n > 0 => compact_path(&full, n as usize),
+        _ => full.into_owned(),
+    };
+    let chars: Vec<char> = name.chars().collect();
+    // Common.cpp MAX_PATH trimming of a long name.
+    let name = if len <= 0 && chars.len() >= 260 {
+        let head: String = chars[..127].iter().collect();
+        let tail: String = chars[chars.len() - 130..].iter().collect();
+        format!("{head}...{tail}")
+    } else {
+        name
+    };
+    format!("{}: {name}", i + 1)
+}
+
+// PathCompactPathEx: the start of the path, "...", then the file name, in at most `max` characters.
+pub fn compact_path(path: &str, max: usize) -> String {
+    let c: Vec<char> = path.chars().collect();
+    if c.len() <= max {
+        return path.to_string();
+    }
+    let file = c.iter().rposition(|&x| x == '/').unwrap_or(0);
+    let tail = &c[file..];
+    if tail.len() + 3 > max {
+        let name = &c[(file + 1).min(c.len())..];
+        let keep = max.saturating_sub(3).min(name.len());
+        return name[..keep].iter().collect::<String>() + "...";
+    }
+    let keep = max - 3 - tail.len();
+    c[..keep].iter().collect::<String>() + "..." + &tail.iter().collect::<String>()
 }
 
 // Load Session... and Save Session..., after Move to Trash as in Notepad_plus.rc.
@@ -310,15 +343,41 @@ thread_local! {
     static S: State = State::default();
 }
 
-fn load_recent() -> Recent {
+// The text of config.xml; a read error is kept, and then the app does not write config.xml.
+pub(crate) fn read_config() -> Option<String> {
     match app_support_dir().map(|d| read_file(&d.join("config.xml"))) {
         Some(Err(e)) => {
             S.with(|s| *s.config_error.borrow_mut() = Some(e));
-            Recent::default()
+            None
         }
-        Some(Ok(Some(x))) => parse_history(&x),
-        _ => Recent::default(),
+        Some(Ok(x)) => x,
+        None => None,
     }
+}
+
+// Writes the History and the settings to config.xml; nothing is written when config.xml could not be read.
+pub(crate) fn save_config() -> Result<(), String> {
+    let Some(dir) = app_support_dir() else {
+        return Ok(());
+    };
+    if S.with(|s| s.config_error.borrow().is_some()) {
+        return Ok(());
+    }
+    let path = dir.join("config.xml");
+    let rec = recent();
+    read_file(&path)
+        .and_then(|old| write_history(old.as_deref(), &rec))
+        .and_then(|x| crate::prefs::patch_config(Some(&x)))
+        .and_then(|x| write_file(&path, &x, false))
+}
+
+// Parameters.cpp feedFileListParameters; with CheckHistoryFiles, missing files leave the list at launch.
+fn load_recent() -> Recent {
+    let mut r = read_config().map_or_else(Recent::default, |x| parse_history(&x));
+    if crate::prefs::get().check_history_files {
+        r.files.retain(|p| p.exists());
+    }
+    r
 }
 
 // The list loads from config.xml at the first use, also when a file opens before the launch ends.
@@ -331,7 +390,7 @@ fn recent() -> Recent {
 }
 
 // The (menu text, language name) pairs of the Language menu.
-fn lang_pairs(c: &Config) -> Vec<(String, String)> {
+pub(crate) fn lang_pairs(c: &Config) -> Vec<(String, String)> {
     language::menu_entries(c)
         .into_iter()
         .flat_map(|e| match e {
@@ -414,10 +473,11 @@ impl App {
     pub(crate) fn start_session(&self) {
         self.refresh_recent_menu();
         if let Some(e) = S.with(|s| s.config_error.borrow().clone()) {
-            let info = format!("{e}\n\nThe recent files list is not saved when the app quits.");
+            let info = format!("{e}\n\nThe settings and the recent files list are not saved.");
             self.alert("Cannot read config.xml", &info, &["OK"]);
         }
-        let no_session = std::env::args_os().any(|a| a == "-nosession");
+        let p = crate::prefs::get();
+        let no_session = std::env::args_os().any(|a| a == "-nosession") || !p.remember_session;
         S.with(|s| s.no_session.set(no_session));
         let session = app_support_dir()
             .filter(|_| !no_session)
@@ -428,28 +488,23 @@ impl App {
             if let Some(item) = opened {
                 self.tab_view().selectTabViewItem(Some(&item));
             }
+            // Notepad_plus_Window.cpp: addNewDocumentOnStartup opens a new document after the session.
+            if p.new_doc_on_startup && !self.ivars().tabs.borrow().is_empty() {
+                self.add_tab(None, Enc::Utf8, b"", false);
+            }
         }
     }
 
-    // Quit: write session.xml and the History of config.xml.
+    // Quit: write session.xml (when RememberLastSession is on), then the History and the settings of config.xml.
     pub(crate) fn save_on_quit(&self, s: &Session) {
         let Some(dir) = app_support_dir() else {
             return;
         };
         let mut errors = vec![];
-        if !S.with(|s| s.no_session.get()) {
+        if !S.with(|s| s.no_session.get()) && crate::prefs::get().remember_session {
             errors.extend(write_file(&dir.join("session.xml"), &write_session(s), true).err());
         }
-        if S.with(|s| s.config_error.borrow().is_none()) {
-            let path = dir.join("config.xml");
-            let rec = recent();
-            errors.extend(
-                read_file(&path)
-                    .and_then(|old| write_history(old.as_deref(), &rec))
-                    .and_then(|x| write_file(&path, &x, false))
-                    .err(),
-            );
-        }
+        errors.extend(save_config().err());
         if !errors.is_empty() {
             self.alert(
                 "Cannot save the session or the recent files list",
@@ -685,6 +740,21 @@ impl App {
         self.refresh_recent_menu();
     }
 
+    // Preferences > Recent Files History: (max. number of entries, in submenu, customLength).
+    pub(crate) fn recent_options(&self) -> (usize, bool, i64) {
+        with_recent(|r| (r.max, r.sub_menu, r.custom_length))
+    }
+
+    pub(crate) fn set_recent_options(&self, max: usize, sub_menu: bool, custom_length: i64) {
+        with_recent(|r| {
+            r.max = max.min(MAX_RECENT);
+            r.sub_menu = sub_menu;
+            r.custom_length = custom_length;
+            r.files.truncate(r.max);
+        });
+        self.refresh_recent_menu();
+    }
+
     // lastRecentFileList.cpp updateMenu: the recent items go at the end of the File menu.
     fn refresh_recent_menu(&self) {
         let mtm = self.mtm();
@@ -711,7 +781,7 @@ impl App {
             .enumerate()
             .map(|(k, p)| {
                 tag(
-                    item(mtm, &menu_title(k, p), sel!(openRecentFile:), "", t),
+                    item(mtm, &menu_title(k, p, rec.custom_length), sel!(openRecentFile:), "", t),
                     BASE + k as isize,
                 )
             })
@@ -953,7 +1023,19 @@ mod tests {
 
     #[test]
     fn menu_titles() {
-        assert_eq!(menu_title(0, Path::new("/a/b.txt")), "1: /a/b.txt");
-        assert_eq!(menu_title(9, Path::new("/c")), "10: /c");
+        assert_eq!(menu_title(0, Path::new("/a/b.txt"), -1), "1: /a/b.txt");
+        assert_eq!(menu_title(9, Path::new("/c"), -1), "10: /c");
+        assert_eq!(menu_title(1, Path::new("/a/b.txt"), 0), "2: b.txt");
+        assert_eq!(menu_title(0, Path::new("/a/b.txt"), 100), "1: /a/b.txt");
+        assert_eq!(
+            menu_title(0, Path::new("/Users/me/projects/notes/todo.txt"), 20),
+            "1: /Users/m.../todo.txt"
+        );
+        let long = format!("/{}", "x".repeat(300));
+        let t = menu_title(0, Path::new(&long), -1);
+        assert_eq!(t.chars().count(), 3 + 127 + 3 + 130);
+        assert_eq!(compact_path("/a/verylongfilename.txt", 10), "verylon...");
+        assert_eq!(compact_path("/a/b.txt", 8), "/a/b.txt");
+        assert_eq!(compact_path("/abc/def/g.txt", 12).chars().count(), 12);
     }
 }

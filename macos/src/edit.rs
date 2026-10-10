@@ -1097,7 +1097,7 @@ pub fn begin_end_select(
 pub fn cut_or_copy(v: &NSView, cut: bool) {
     if s(v, SCI_GETSELECTIONEMPTY, 0, 0) == 0 {
         s(v, if cut { SCI_CUT } else { SCI_COPY }, 0, 0);
-    } else {
+    } else if crate::prefs::with(|p| p.copy_cut_line) {
         s(v, SCI_COPYALLOWLINE, 0, 0);
         if cut {
             s(v, SCI_LINEDELETE, 0, 0);

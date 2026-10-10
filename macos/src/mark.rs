@@ -469,7 +469,8 @@ impl App {
                 let text = word_selection(&v);
                 if !text.is_empty() {
                     let doc = sci::doc(&v);
-                    for r in occurrences(&doc, &text, true, false) {
+                    let (case, whole) = crate::prefs::with(|p| p.mark_all());
+                    for r in occurrences(&doc, &text, whole, case) {
                         fill(&v, style_id(k), r);
                     }
                 }
@@ -504,27 +505,33 @@ impl App {
         }
     }
 
-    // Port of SmartHighlighter::highlightView with the Notepad++ defaults: whole word, no match case.
+    // Port of SmartHighlighter::highlightView with the Smart Highlighting settings of Preferences > Highlighting.
     pub(crate) fn smart_highlight(&self) {
         let Some(v) = self.editor() else { return };
         if SKIP_SMART.replace(false) {
             return;
         }
         clear_all(&v, SMART);
+        let p = crate::prefs::with(|p| p.smart_highlight());
         let (s, e) = sci::selection(&v);
-        if s == e {
+        if s == e || !p.enabled {
             return;
         }
         let caret = send(&v, SCI_GETCURRENTPOS, 0, 0);
         let ws = send(&v, SCI_WORDSTARTPOSITION, caret as usize, 1);
         let we = send(&v, SCI_WORDENDPOSITION, ws as usize, 1);
-        if ws == we || ws != s || we != e {
+        let doc = sci::doc(&v);
+        let line_len = {
+            let (a, b) = doc.line_span(doc.line_of(caret));
+            b - a
+        };
+        if (p.whole_word && (ws == we || ws != s || we != e)) || (!p.whole_word && e - s > line_len) {
             return;
         }
-        let doc = sci::doc(&v);
         let o = Opts {
             find: String::from_utf8_lossy(&doc.range(s, e)).into_owned(),
-            whole_word: true,
+            whole_word: p.whole_word,
+            match_case: p.match_case,
             wrap: true,
             ..Default::default()
         };

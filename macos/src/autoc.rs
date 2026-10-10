@@ -42,10 +42,6 @@ const SCI_AUTOCSETMULTI: u32 = 2636;
 const SCI_SETTARGETRANGE: u32 = 2686;
 const SC_MULTIAUTOC_EACH: usize = 1;
 
-// NppGUI defaults in Parameters.h: _autocStatus autoc_both, _autocFromLen 1, _autocIgnoreNumbers, _funcParams.
-const AUTOC_FROM_LEN: usize = 1;
-const AUTOC_IGNORE_NUMBERS: bool = true;
-const FUNC_PARAMS: bool = true;
 const FUNC_IMG_ID: usize = 1000;
 const BOX_IMG_ID: usize = 1001;
 const TYPE_SEP: char = '\x1E';
@@ -275,7 +271,7 @@ impl Text<'_> {
 pub fn doc_words(doc: Text, prefix: &[u8], exclude: &[u8], match_case: bool) -> Vec<String> {
     const STOP: &[u8] = b" \t\n\r.,;:\"(){}=<>'+!?[]";
     let mut out: Vec<String> = vec![];
-    if prefix.is_empty() || (AUTOC_IGNORE_NUMBERS && prefix.iter().all(u8::is_ascii_digit)) {
+    if prefix.is_empty() || (crate::prefs::with(|p| p.autoc_ignore_numbers) && prefix.iter().all(u8::is_ascii_digit)) {
         return out;
     }
     let mut seen: HashSet<Cow<[u8]>> = HashSet::new();
@@ -895,7 +891,8 @@ impl App {
             (SCN_CALLTIPCLICK, 2) => self.autoc_cmd(NEXT_HINT),
             (SCN_CHARADDED, _) if n.ch != 0 && !macros::recording() => {
                 let Some(c) = self.autoc_ctx() else { return };
-                if (FUNC_PARAMS || c.calltip_visible()) && c.update_tip(n.ch, false) {
+                let p = crate::prefs::with(|p| p.auto_completion());
+                if (p.func_params || c.calltip_visible()) && c.update_tip(n.ch, false) {
                     return;
                 }
                 if c.s(SCI_AUTOCACTIVE, 0, 0) != 0 {
@@ -903,8 +900,13 @@ impl App {
                 }
                 let cur = c.caret();
                 let len = (cur - c.word_start(cur)) as usize;
-                if len < 64 && len >= AUTOC_FROM_LEN {
-                    c.show_complete(FUNC_AND_WORD, false);
+                let tag = match p.action {
+                    crate::prefs::AUTOC_FUNC => FUNC_COMPLETION,
+                    crate::prefs::AUTOC_WORD => WORD_COMPLETION,
+                    _ => FUNC_AND_WORD,
+                };
+                if p.action != crate::prefs::AUTOC_NONE && len < 64 && len >= p.from_len {
+                    c.show_complete(tag, false);
                 }
             }
             _ => {}

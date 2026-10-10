@@ -720,28 +720,12 @@ pub fn set_gui_config(
     name: &str,
     attrs: &[(&str, String)],
 ) -> Result<String, String> {
-    let src = existing.filter(|s| s.contains("<NotepadPlus")).unwrap_or(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n</NotepadPlus>\r\n",
-    );
-    let mut d = Doc::parse(src)?;
-    let root = d.root_mut().ok_or("config.xml: no root element")?;
-    if root.first("GUIConfigs").is_none() {
-        let mut g = El::new("GUIConfigs");
-        g.kids.push(Node::Text("\r\n    ".into()));
-        root.push(g);
-    }
-    let gc = root.first_mut("GUIConfigs").unwrap();
-    if !gc.els("GUIConfig").any(|g| g.get("name") == Some(name)) {
-        let mut g = El::new("GUIConfig");
-        g.set("name", name);
-        gc.push(g);
-    }
-    let g = gc
-        .els_mut("GUIConfig")
-        .find(|g| g.get("name") == Some(name))
-        .unwrap();
-    attrs.iter().for_each(|(k, v)| g.set(k, v));
-    Ok(d.write())
+    let el = crate::prefs::Elem {
+        name: name.into(),
+        attrs: attrs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+        text: None,
+    };
+    crate::prefs::patch(existing, &crate::prefs::GUI_PATH, "GUIConfig", &[el])
 }
 
 pub fn read_doc(path: &Path) -> Result<Option<Doc>, String> {

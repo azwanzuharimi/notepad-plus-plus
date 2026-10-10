@@ -64,15 +64,6 @@ pub fn import_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Retained<NSM
     )
 }
 
-// The Settings menu until the Preferences slice adds its own.
-pub fn settings_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<NSMenuItem>> {
-    vec![
-        configurator_item(mtm, t),
-        NSMenuItem::separatorItem(mtm),
-        import_menu(mtm, t),
-    ]
-}
-
 #[derive(Default)]
 struct St {
     themes: Vec<(String, Src)>,

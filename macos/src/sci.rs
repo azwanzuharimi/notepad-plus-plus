@@ -57,7 +57,6 @@ const SCI_EMPTYUNDOBUFFER: u32 = 2175;
 const SCI_GETTEXT: u32 = 2182;
 const SCI_SETMARGINTYPEN: u32 = 2240;
 const SCI_SETMARGINWIDTHN: u32 = 2242;
-const SCI_TEXTWIDTH: u32 = 2276;
 const SCI_APPENDTEXT: u32 = 2282;
 const SCI_COLOURISE: u32 = 4003;
 const SCI_SETPROPERTY: u32 = 4004;
@@ -97,9 +96,7 @@ const SC_FOLDFLAG_LINEAFTER_CONTRACTED: usize = 0x10;
 const SC_AUTOMATICFOLD_ALL: usize = 7;
 const SC_IV_LOOKFORWARD: usize = 2;
 const SC_IV_LOOKBOTH: usize = 3;
-const SC_WRAPINDENT_SAME: usize = 1;
 const STYLE_DEFAULT: usize = 32;
-const STYLE_LINENUMBER: usize = 33;
 const SC_CP_UTF8: usize = 65001;
 const SC_MARGIN_NUMBER: isize = 1;
 
@@ -383,8 +380,7 @@ pub fn apply_language(v: &NSView, cfg: &Config, lang: Option<&crate::config::Lan
         }
     }
     send(v, SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
-    let w = send_str(v, SCI_TEXTWIDTH, STYLE_LINENUMBER, "_99999");
-    send(v, SCI_SETMARGINWIDTHN, 0, w);
+    crate::prefs::line_number_width(v);
     setup_fold(v, cfg, name);
     setup_tabs(v, name);
     setup_indent_guides(
@@ -396,16 +392,17 @@ pub fn apply_language(v: &NSView, cfg: &Config, lang: Option<&crate::config::Lan
 }
 
 const FOLD_MARGIN: usize = 3;
-// ScintillaEditView::_markersArray: fold marker numbers and the box style.
-const FOLD_MARKERS: [(usize, isize); 7] = [
-    (31, 14),
-    (30, 12),
-    (29, 9),
-    (28, 10),
-    (25, 13),
-    (26, 15),
-    (27, 11),
-];
+// ScintillaEditView::_markersArray: the fold marker numbers, then the marker symbols of each folderMarkStyle.
+const FOLD_MARKERS: [usize; 7] = [31, 30, 29, 28, 25, 26, 27];
+
+pub fn fold_symbols(style: &str) -> [isize; 7] {
+    match style {
+        "simple" => [7, 8, 5, 5, 5, 5, 5],
+        "arrow" => [6, 2, 5, 5, 5, 5, 5],
+        "circle" => [20, 18, 9, 16, 19, 21, 17],
+        _ => [14, 12, 9, 10, 13, 15, 11],
+    }
+}
 
 // Fold margin, box markers, fold colours and fold properties as ScintillaEditView sets them.
 pub fn setup_fold(v: &NSView, cfg: &Config, lang: &str) {
@@ -425,7 +422,8 @@ pub fn setup_fold(v: &NSView, cfg: &Config, lang: &str) {
         fold.and_then(|s| s.fg).unwrap_or(0x808080),
     );
     let active = global("Fold active").and_then(|s| s.fg).unwrap_or(0x0000FF);
-    for (n, m) in FOLD_MARKERS {
+    let style = crate::prefs::with(|p| p.folder_style.clone());
+    for (n, m) in FOLD_MARKERS.into_iter().zip(fold_symbols(&style)) {
         send(v, SCI_MARKERDEFINE, n, m);
         send(v, SCI_MARKERSETFORE, n, fg);
         send(v, SCI_MARKERSETBACK, n, bg);
@@ -451,7 +449,7 @@ pub fn setup_fold(v: &NSView, cfg: &Config, lang: &str) {
         v,
         SCI_SETMARGINWIDTHN,
         FOLD_MARGIN,
-        if view::needs_fold_margin(lang) { 14 } else { 0 },
+        if view::needs_fold_margin(lang) && style != "none" { 14 } else { 0 },
     );
     send(v, SCI_SETMARGINSENSITIVEN, FOLD_MARGIN, 1);
     send(v, SCI_SETFOLDFLAGS, SC_FOLDFLAG_LINEAFTER_CONTRACTED, 0);
@@ -498,11 +496,13 @@ pub fn setup_symbols(v: &NSView, cfg: &Config, ws: bool, eol: bool, npc: bool, c
     }
 }
 
-// ScintillaEditView::setTabSettings with the default Lang and NppGUI values.
+// ScintillaEditView::setTabSettings with the Lang and NppGUI values of Preferences > Indentation.
 pub fn setup_tabs(v: &NSView, lang: &str) {
-    let (width, use_tabs) = view::tab_settings(lang);
+    const SCI_SETBACKSPACEUNINDENTS: u32 = 2262;
+    let (width, use_tabs, bs) = crate::prefs::tab_settings(lang);
     send(v, SCI_SETTABWIDTH, width, 0);
     send(v, SCI_SETUSETABS, use_tabs as usize, 0);
+    send(v, SCI_SETBACKSPACEUNINDENTS, bs as usize, 0);
 }
 
 pub fn setup_indent_guides(v: &NSView, look_forward: bool, on: bool) {
@@ -514,9 +514,9 @@ pub fn setup_indent_guides(v: &NSView, look_forward: bool, on: bool) {
     send(v, SCI_SETINDENTATIONGUIDES, mode, 0);
 }
 
-// Word wrap with the Notepad++ default aligned indent, and the wrap symbol at the line end.
+// Word wrap with the Line Wrap indent of Preferences > Editing 1, and the wrap symbol at the line end.
 pub fn setup_wrap(v: &NSView, wrap: bool, symbol: bool) {
-    send(v, SCI_SETWRAPINDENTMODE, SC_WRAPINDENT_SAME, 0);
+    send(v, SCI_SETWRAPINDENTMODE, crate::prefs::with(|p| p.wrap_indent()), 0);
     send(v, SCI_SETWRAPMODE, wrap as usize, 0);
     send(v, SCI_SETWRAPVISUALFLAGSLOCATION, 0, 0);
     send(v, SCI_SETWRAPVISUALFLAGS, symbol as usize, 0);
@@ -525,8 +525,7 @@ pub fn setup_wrap(v: &NSView, wrap: bool, symbol: bool) {
 // Sets the zoom and fits the line number margin to it.
 pub fn set_zoom(v: &NSView, zoom: isize) {
     send(v, SCI_SETZOOM, zoom as usize, 0);
-    let w = send_str(v, SCI_TEXTWIDTH, STYLE_LINENUMBER, "_99999");
-    send(v, SCI_SETMARGINWIDTHN, 0, w);
+    crate::prefs::line_number_width(v);
 }
 
 const SCI_SETCHANGEHISTORY: u32 = 2780;
@@ -557,7 +556,7 @@ pub fn setup_bookmark_margin(v: &NSView, cfg: &Config) {
     send(v, SCI_SETMARGINTYPEN, m, SC_MARGIN_COLOUR);
     send(v, SCI_SETMARGINBACKN, m, margin_back(cfg, "Bookmark margin"));
     send(v, SCI_SETMARGINMASKN, m, 1 << MARK_BOOKMARK);
-    send(v, SCI_SETMARGINWIDTHN, m, 16);
+    send(v, SCI_SETMARGINWIDTHN, m, crate::prefs::bookmark_width());
     send(v, SCI_SETMARGINSENSITIVEN, m, 1);
     send(v, SCI_RGBAIMAGESETWIDTH, 14, 0);
     send(v, SCI_RGBAIMAGESETHEIGHT, 14, 0);
@@ -570,12 +569,11 @@ pub fn setup_change_history(v: &NSView, cfg: &Config) {
     use crate::search_extras::{CHANGE_MARGIN, HISTORY_MASK};
     const SC_MARGIN_COLOUR: isize = 6;
     const SCI_SETMARGINBACKN: u32 = 2250;
-    const SC_CHANGE_HISTORY_MARKERS: usize = 3;
     let m = CHANGE_MARGIN;
     send(v, SCI_SETMARGINTYPEN, m, SC_MARGIN_COLOUR);
     send(v, SCI_SETMARGINBACKN, m, margin_back(cfg, "Change History margin"));
     send(v, SCI_SETMARGINMASKN, m, HISTORY_MASK);
-    send(v, SCI_SETMARGINWIDTHN, m, 9);
+    send(v, SCI_SETMARGINWIDTHN, m, crate::prefs::change_margin_width());
     for (marker, name, rgb) in [
         (21, "Change History revert origin", 0xBFA040),
         (22, "Change History saved", 0x00A000),
@@ -586,7 +584,7 @@ pub fn setup_change_history(v: &NSView, cfg: &Config) {
         send(v, SCI_MARKERSETFORE, marker, s.and_then(|s| s.fg).unwrap_or(rgb));
         send(v, SCI_MARKERSETBACK, marker, s.and_then(|s| s.bg).unwrap_or(rgb));
     }
-    send(v, SCI_SETCHANGEHISTORY, SC_CHANGE_HISTORY_MARKERS, 0);
+    send(v, SCI_SETCHANGEHISTORY, crate::prefs::with(|p| p.change_history_flags()), 0);
 }
 
 // Starts change history again from the current text; Scintilla needs an empty undo buffer for this.
@@ -607,9 +605,10 @@ pub fn setup_multi_selection(v: &NSView) {
     const SCVS_RECTANGULARSELECTION: usize = 1;
     const SC_MULTIPASTE_EACH: usize = 1;
     const SC_MULTIAUTOC_EACH: usize = 1;
-    send(v, SCI_SETMULTIPLESELECTION, 1, 0);
+    let (multi, virtual_space) = crate::prefs::with(|p| (p.multi_selection, p.virtual_space));
+    send(v, SCI_SETMULTIPLESELECTION, multi as usize, 0);
     send(v, SCI_SETADDITIONALSELECTIONTYPING, 1, 0);
-    send(v, SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION, 0);
+    send(v, SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION | if virtual_space { 6 } else { 0 }, 0);
     send(v, SCI_SETMULTIPASTE, SC_MULTIPASTE_EACH, 0);
     send(v, SCI_AUTOCSETMULTI, SC_MULTIAUTOC_EACH, 0);
     send(v, SCI_SETMOUSESELECTIONRECTANGULARSWITCH, 1, 0);

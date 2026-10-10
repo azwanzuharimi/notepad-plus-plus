@@ -128,7 +128,10 @@ pub fn comment_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Retained<NS
 pub(crate) fn tab_language(t: &Tab) -> Option<&'static Language> {
     match &t.lang {
         Some(n) => cfg().languages.iter().find(|l| &l.name == n),
-        None => lang::language_for_path(cfg(), t.path.as_deref().unwrap_or(Path::new(&t.name))),
+        None => match t.path.as_deref() {
+            Some(p) => lang::language_for_path(cfg(), p),
+            None => lang::language_for_path(cfg(), Path::new(&t.name)).or_else(crate::prefs::new_doc_language),
+        },
     }
 }
 
