@@ -36,6 +36,7 @@ mod tools;
 mod udl;
 mod view;
 mod view_extras;
+mod views;
 mod window;
 
 use encoding::Enc;
@@ -120,6 +121,7 @@ struct Ivars {
     view: Cell<view::Opts>,
     begin_select: Cell<Option<(isize, bool)>>,
     dock: OnceCell<docking::Dock>,
+    views: views::Views,
 }
 
 #[repr(C)]
@@ -218,9 +220,9 @@ define_class!(
             }
             self.autoc_notify(scn);
             backup::notify(scn);
+            self.views_notify(scn);
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
-                let n = self.ivars().tabs.borrow().len();
-                (0..n).for_each(|i| self.refresh_title(i));
+                self.refresh_labels();
             }
             if h.code == sci::SCN_UPDATEUI && h.id_from != sci::RESULTS_ID {
                 self.update_status();
@@ -710,7 +712,7 @@ define_class!(
             if let Some(t) = self.tab(i) {
                 sci::set_read_only(&t.view, ro || self.ivars().replacing.get());
             }
-            self.doc_list_reload();
+            self.refresh_title(i);
         }
 
         #[unsafe(method(cut:))]
@@ -1049,6 +1051,33 @@ define_class!(
     }
 
     impl App {
+        #[unsafe(method(moveToOtherView:))]
+        fn move_to_other_view_action(&self, _s: Option<&AnyObject>) {
+            self.move_to_other_view();
+        }
+
+        #[unsafe(method(cloneToOtherView:))]
+        fn clone_to_other_view_action(&self, _s: Option<&AnyObject>) {
+            self.clone_to_other_view();
+        }
+
+        #[unsafe(method(focusOtherView:))]
+        fn focus_other_view_action(&self, _s: Option<&AnyObject>) {
+            self.focus_other_view();
+        }
+
+        #[unsafe(method(syncScroll:))]
+        fn sync_scroll_action(&self, s: &NSMenuItem) {
+            self.toggle_sync(s.tag() as usize);
+        }
+
+        #[unsafe(method(rotateViews:))]
+        fn rotate_views_action(&self, s: &NSMenuItem) {
+            self.rotate_views(s.tag() == 1);
+        }
+    }
+
+    impl App {
         #[unsafe(method(showIncrementalSearch:))]
         fn show_incremental_search_action(&self, _s: Option<&AnyObject>) {
             self.show_incremental_search();
@@ -1237,6 +1266,7 @@ define_class!(
                 self.add_tab(None, Enc::Utf8, b"", false);
             }
             NSApplication::sharedApplication(self.mtm()).activate();
+            self.full_screen_key();
         }
 
         #[unsafe(method(applicationShouldTerminate:))]
@@ -1316,7 +1346,8 @@ define_class!(
 
     unsafe impl NSTabViewDelegate for App {
         #[unsafe(method(tabView:didSelectTabViewItem:))]
-        fn did_select(&self, _t: &NSTabView, _i: Option<&NSTabViewItem>) {
+        fn did_select(&self, t: &NSTabView, _i: Option<&NSTabViewItem>) {
+            self.view_selected(t);
             self.focus();
             self.update_status();
             self.doc_list_reload();
@@ -1333,7 +1364,7 @@ impl App {
     }
 
     fn tab_view(&self) -> &NSTabView {
-        self.ivars().tab_view.get().unwrap()
+        self.doc_tabs(self.active_view())
     }
 
     fn build_window(&self) {
@@ -1355,7 +1386,7 @@ impl App {
         unsafe { w.setReleasedWhenClosed(false) };
         w.setTitle(&NSString::from_str("Notepad++"));
         w.setDelegate(Some(ProtocolObject::from_ref(self)));
-        let tv = NSTabView::new(mtm);
+        let tv = Retained::into_super(views::DocTabs::new(mtm));
         tv.setDelegate(Some(ProtocolObject::from_ref(self)));
         let results = sci::new_view();
         sci::set_delegate(&results, self);
@@ -1364,7 +1395,7 @@ impl App {
         let split = NSSplitView::new(mtm);
         split.setVertical(false);
         split.setDividerStyle(NSSplitViewDividerStyle::Thin);
-        split.addSubview(&tv);
+        split.addSubview(&self.edit_split(&tv));
         split.addSubview(&results);
         let content = NSView::new(mtm);
         w.setContentView(Some(&content));
@@ -1589,7 +1620,9 @@ impl App {
                 continue;
             }
             if self.dirty(&t) {
-                kept.push(p.clone());
+                if !kept.contains(p) {
+                    kept.push(p.clone());
+                }
             } else if let Ok(b) = std::fs::read(p) {
                 let i = self
                     .ivars()
@@ -1650,7 +1683,7 @@ impl App {
 
     fn open_path(&self, path: &Path) {
         self.recent_remove(path);
-        if let Some(t) = self.find_open(path, None).and_then(|i| self.tab(i)) {
+        if let Some(t) = self.find_open(path, None).and_then(|i| self.tab(self.in_active_view(i))) {
             self.tab_view().selectTabViewItem(Some(&t.item));
             return;
         }
@@ -1680,18 +1713,11 @@ impl App {
             encoding::detect_eol(text).unwrap_or(p.new_doc_eol()),
         );
         sci::set_read_only(&view, self.ivars().replacing.get());
-        self.macro_arm(&view);
         let lang = match path.as_deref() {
             Some(p) => lang::language_for_path(cfg(), p),
             None => prefs::new_doc_language(),
         };
-        sci::apply_language(&view, cfg(), lang);
-        self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()), cfg());
-        sci::setup_bookmark_margin(&view, cfg());
-        sci::setup_change_history(&view, cfg());
-        sci::setup_multi_selection(&view);
-        mark::setup_indicators(&view, cfg());
-        self.setup_extras(&view);
+        self.setup_editor(&view, lang);
         let name = match &path {
             Some(p) => p
                 .file_name()
@@ -1706,7 +1732,8 @@ impl App {
         let mtime = path.as_deref().and_then(filestatus::stamp);
         let item = NSTabViewItem::new();
         item.setView(Some(&view));
-        self.ivars().tabs.borrow_mut().push(Tab {
+        let at = self.view_range(self.active_view()).end;
+        self.ivars().tabs.borrow_mut().insert(at, Tab {
             view,
             item: item.clone(),
             path,
@@ -1718,12 +1745,22 @@ impl App {
             lang: None,
             mtime,
         });
-        let last = self.ivars().tabs.borrow().len() - 1;
-        self.apply_udl_at(last);
-        self.refresh_title(last);
+        self.apply_udl_at(at);
+        self.refresh_title(at);
         self.tab_view().addTabViewItem(&item);
         self.tab_view().selectTabViewItem(Some(&item));
         self.update_status();
+    }
+
+    pub(crate) fn setup_editor(&self, view: &NSView, lang: Option<&config::Language>) {
+        self.macro_arm(view);
+        sci::apply_language(view, cfg(), lang);
+        self.apply_view(view, lang.map_or("normal", |l| l.name.as_str()), cfg());
+        sci::setup_bookmark_margin(view, cfg());
+        sci::setup_change_history(view, cfg());
+        sci::setup_multi_selection(view);
+        mark::setup_indicators(view, cfg());
+        self.setup_extras(view);
     }
 
     // Checkmarks for the current encoding and EOL; format commands are off while Replace in Files runs.
@@ -1738,6 +1775,9 @@ impl App {
             return r;
         }
         if let Some(r) = self.validate_autoc(item) {
+            return r;
+        }
+        if let Some(r) = self.validate_views(item) {
             return r;
         }
         let Some(action) = item.action() else {
@@ -1834,10 +1874,16 @@ impl App {
     }
 
     fn refresh_title(&self, i: usize) {
-        let Some(t) = self.tab(i) else { return };
-        let mark = if self.dirty(&t) { "*" } else { "" };
-        t.item
-            .setLabel(&NSString::from_str(&format!("{mark}{}", t.name)));
+        self.sync_clones(i);
+        self.refresh_labels();
+    }
+
+    fn refresh_labels(&self) {
+        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
+        for t in &tabs {
+            let mark = if self.dirty(t) { "*" } else { "" };
+            t.item.setLabel(&NSString::from_str(&format!("{mark}{}", t.name)));
+        }
         self.doc_list_reload();
     }
 
@@ -1928,7 +1974,12 @@ impl App {
         Some(enc)
     }
 
+    // NppIO.cpp fileClose: a cloned document closes without a question.
     fn confirm_close(&self, i: usize) -> bool {
+        !self.clones_of(i).is_empty() || self.ask_save(i)
+    }
+
+    fn ask_save(&self, i: usize) -> bool {
         let Some(tab) = self.tab(i) else { return true };
         if !self.dirty(&tab) {
             return true;
@@ -2086,7 +2137,7 @@ fn main() {
     submenu(mtm, &bar, "File", fileops::file_menu(mtm, t));
     submenu(mtm, &bar, "Edit", edit::edit_menu(mtm, t));
     submenu(mtm, &bar, "Search", search_extras::search_menu(mtm, t));
-    submenu(mtm, &bar, "View", view::view_menu(mtm, t));
+    submenu(mtm, &bar, "View", views::with_view_items(mtm, view::view_menu(mtm, t), t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     submenu(mtm, &bar, "Language", language::language_menu(mtm, t));
     submenu(mtm, &bar, "Settings", prefs::settings_menu(mtm, t));

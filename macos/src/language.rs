@@ -158,6 +158,7 @@ impl App {
             t.lang = Some(l.name.clone());
         }
         self.apply_tab_language(i);
+        self.refresh_title(i);
         self.update_status();
     }
 

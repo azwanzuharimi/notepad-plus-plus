@@ -344,7 +344,7 @@ impl App {
             t.view.clone()
         };
         sci::set_read_only(&view, on || self.ivars().replacing.get());
-        self.doc_list_reload();
+        self.refresh_title(i);
     }
 
     // NppCommands.cpp IDM_VIEW_MONITORING and Notepad_plus::monitoringStartOrStopAndUpdateUI.
@@ -486,7 +486,7 @@ impl App {
         let Some(w) = self.ivars().window.get() else {
             return;
         };
-        let tv = self.tab_view();
+        let tv = self.doc_tabs(0);
         match POST_IT.with(|p| p.borrow_mut().take()) {
             None => {
                 let saved = PostIt {
@@ -496,6 +496,7 @@ impl App {
                     title: w.titleVisibility(),
                 };
                 w.setLevel(NSFloatingWindowLevel);
+                self.doc_tabs(1).setTabViewType(NSTabViewType::NoTabsNoBorder);
                 tv.setTabViewType(NSTabViewType::NoTabsNoBorder);
                 w.setTitlebarAppearsTransparent(true);
                 w.setTitleVisibility(NSWindowTitleVisibility::Hidden);
@@ -508,11 +509,13 @@ impl App {
                 } else {
                     NSNormalWindowLevel
                 });
+                self.doc_tabs(1).setTabViewType(saved.tabs);
                 tv.setTabViewType(saved.tabs);
                 w.setTitlebarAppearsTransparent(saved.transparent);
                 w.setTitleVisibility(saved.title);
                 self.show_status_bar(true);
-                self.tab_bar_menu();
+                self.tab_bar_menu_for(self.doc_tabs(0));
+                self.tab_bar_menu_for(self.doc_tabs(1));
             }
         }
         self.focus();

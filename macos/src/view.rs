@@ -410,38 +410,52 @@ impl App {
         });
     }
 
+    // AppKit changes a Ctrl+Cmd+F item at launch and adds a second item, so the key is set after the launch.
+    pub(crate) fn full_screen_key(&self) {
+        let bar = objc2_app_kit::NSApplication::sharedApplication(self.mtm()).mainMenu();
+        let Some(m) = bar.and_then(|b| b.itemWithTitle(&ns("View"))?.submenu()) else {
+            return;
+        };
+        if let Some(i) = m.itemArray().iter().find(|i| i.action() == Some(sel!(fullScreen:))) {
+            i.setKeyEquivalent(&ns("f"));
+            i.setKeyEquivalentModifierMask(NSEventModifierFlags::Control | NSEventModifierFlags::Command);
+        }
+    }
+
     pub(crate) fn full_screen(&self) {
         self.ivars().window.get().unwrap().toggleFullScreen(None);
     }
 
     pub(crate) fn select_tab(&self, tag: usize) {
-        let n = self.ivars().tabs.borrow().len();
-        let cur = self.current().unwrap_or(0);
-        if let Some(t) = tab_target(tag, cur, n).and_then(|i| self.tab(i)) {
+        let r = self.view_range(self.active_view());
+        let cur = self.current().map_or(0, |c| c - r.start);
+        if let Some(t) = tab_target(tag, cur, r.len()).and_then(|i| self.tab(r.start + i)) {
             self.tab_view().selectTabViewItem(Some(&t.item));
         }
     }
 
     pub(crate) fn move_tab(&self, tag: usize) {
-        let n = self.ivars().tabs.borrow().len();
+        let r = self.view_range(self.active_view());
         let Some(cur) = self.current() else { return };
-        if let Some(to) = move_target(tag, cur, n) {
-            self.move_tab_to(cur, to);
+        if let Some(to) = move_target(tag, cur - r.start, r.len()) {
+            self.move_tab_to(cur, r.start + to);
         }
     }
 
-    // Moves the tab at `from` to `to` and selects it.
+    // Moves the tab at `from` to `to` in the same view and selects it.
     pub(crate) fn move_tab_to(&self, from: usize, to: usize) {
+        let p = self.pane_of(from);
+        let start = self.view_range(p).start;
         let t = {
             let mut tabs = self.ivars().tabs.borrow_mut();
             let t = tabs.remove(from);
             tabs.insert(to, t.clone());
             t
         };
-        self.tab_view().removeTabViewItem(&t.item);
-        self.tab_view()
-            .insertTabViewItem_atIndex(&t.item, to as isize);
-        self.tab_view().selectTabViewItem(Some(&t.item));
+        let tv = self.doc_tabs(p);
+        tv.removeTabViewItem(&t.item);
+        tv.insertTabViewItem_atIndex(&t.item, (to - start) as isize);
+        tv.selectTabViewItem(Some(&t.item));
     }
 
     pub(crate) fn fold_all(&self, expand: bool) {
@@ -683,15 +697,7 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
     };
     vec![
         item(mtm, "Always on Top", sel!(alwaysOnTop:), "", t),
-        keyed(
-            mtm,
-            "Toggle Full Screen Mode",
-            sel!(fullScreen:),
-            0,
-            "f",
-            ctrl | cmd,
-            t,
-        ),
+        item(mtm, "Toggle Full Screen Mode", sel!(fullScreen:), "", t),
         keyed(mtm, "Post-It", sel!(postIt:), 0, "\u{F70F}", NSEventModifierFlags::empty(), t),
         item(mtm, "Distraction Free Mode", sel!(distractionFree:), "", t),
         sep(),

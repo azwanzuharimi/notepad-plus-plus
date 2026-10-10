@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 60] = [
+const NOT_RECORDED: [&str; 61] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -106,6 +106,7 @@ const NOT_RECORDED: [&str; 60] = [
     "IDM_VIEW_HIDELINES",
     "IDM_VIEW_MONITORING",
     "IDM_SETTING_EDITCONTEXTMENU",
+    "IDM_VIEW_SWITCHTO_OTHER_VIEW",
 ];
 
 struct Cmd {
@@ -245,6 +246,11 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_VIEW_GOTO_END", 10006, "moveTab:", 1),
         ("IDM_VIEW_TAB_MOVEFORWARD", 44098, "moveTab:", 2),
         ("IDM_VIEW_TAB_MOVEBACKWARD", 44099, "moveTab:", 3),
+        ("IDM_VIEW_GOTO_ANOTHER_VIEW", 10001, "moveToOtherView:", -1),
+        ("IDM_VIEW_CLONE_TO_ANOTHER_VIEW", 10002, "cloneToOtherView:", -1),
+        ("IDM_VIEW_SWITCHTO_OTHER_VIEW", 44072, "focusOtherView:", -1),
+        ("IDM_VIEW_SYNSCROLLV", 44035, "syncScroll:", 0),
+        ("IDM_VIEW_SYNSCROLLH", 44036, "syncScroll:", 1),
         ("IDM_FORMAT_TODOS", 45001, "eolConvert:", 0),
         ("IDM_FORMAT_TOUNIX", 45002, "eolConvert:", 2),
         ("IDM_FORMAT_TOMAC", 45003, "eolConvert:", 1),
@@ -1186,6 +1192,7 @@ mod tests {
             include_str!("udl/mod.rs"),
             include_str!("prefs.rs"),
             include_str!("context_menu.rs"),
+            include_str!("views.rs"),
         ]
         .concat();
         let table = menu_cmds();

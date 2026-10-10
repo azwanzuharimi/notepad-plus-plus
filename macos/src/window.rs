@@ -245,6 +245,7 @@ impl App {
 
     // Moves the tabs to the given order of their current indices; the active tab stays active.
     fn reorder_tabs(&self, order: &[usize]) {
+        let order = crate::views::keep_views(order, self.view_range(crate::views::MAIN).end);
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
         let active = self
             .current()
