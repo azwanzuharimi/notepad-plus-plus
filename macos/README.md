@@ -8,6 +8,13 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Paste Special, substyles):
+
+- Edit > Paste Special: Copy Binary Content, Cut Binary Content, and Paste Binary Content, as in Notepad++. They keep all bytes of the selection, also invalid UTF-8 bytes and NUL bytes. The bytes go on the pasteboard in a private type, and the text goes on it too for other apps. If there are no binary bytes on the pasteboard, Paste Binary Content pastes the text up to the first NUL. There is no Paste HTML Content or Paste RTF Content.
+- Cut and Copy change invalid UTF-8 bytes, as in Notepad++ on Windows (Scintilla `UTF16FromUTF8`). A single invalid byte becomes the character with the same number (0x80 becomes U+0080). A broken multibyte sequence can also take the next byte (C3 28 becomes U+00E8). Use the binary items to keep the bytes. Before this change, Cut and Copy put nothing on the pasteboard, and Cut removed the text.
+- Modification of Scintilla: `scintilla/cocoa/ScintillaCocoa.mm` (`SetPasteboardData`) converts text with invalid UTF-8 bytes with `UTF16FromUTF8`, as `ScintillaWin` does.
+- Substyles: the "USER KEYWORDS" (substyle1 to substyle8) word lists and colours of `stylers.model.xml` and `langs.model.xml` apply, as in Notepad++. This is for C, C++, Java, C#, RC, ActionScript, Swift, Go, JavaScript, TypeScript, Python, GDScript, Lua, Bash, XML, HTML, PHP, ASP, and JSP. Other user keywords in `stylers.model.xml` (for example Perl `carp croak`) do not apply yet.
+
 2026-10-10 (Auto-Completion):
 
 - Edit > Auto-Completion: Function Completion (Ctrl+Space), Word Completion (Cmd+Return), Function Parameters Hint (Ctrl+Shift+Space), Previous and Next Hint (Opt+Up, Opt+Down), and Path Completion (Ctrl+Opt+Space). The Space keys use Ctrl, because Cmd+Space is Spotlight.
@@ -144,7 +151,7 @@ The app name, the short menu bar name (`CFBundleName`), and the bundle identifie
 ## Licence
 
 - The code in `macos/` is licensed under GPL-3.0-or-later, the same as Notepad++.
-- Scintilla and Lexilla have their own licence: see `scintilla/License.txt` and `lexilla/License.txt`.
+- Scintilla and Lexilla have their own licence: see `scintilla/License.txt` and `lexilla/License.txt`. This app changes `scintilla/cocoa/ScintillaCocoa.mm` (see Changes from Notepad++).
 - The Boost files in `boostregex/boost` are licensed under the Boost Software License 1.0: see `scintilla/test/unit/LICENSE_1_0.txt`.
 - The `uchardet` files in `PowerEditor/src/uchardet` have a tri-licence: MPL 1.1, GPL 2.0 or later, or LGPL 2.1 or later (see their file headers). This app uses them under the GPL.
 - The Rust crates this app uses are licensed under MIT, Apache-2.0, Zlib, or Unlicense terms.

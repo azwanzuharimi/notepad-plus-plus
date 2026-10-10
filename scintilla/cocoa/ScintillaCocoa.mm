@@ -1668,6 +1668,13 @@ void ScintillaCocoa::SetPasteboardData(NSPasteboard *board, const SelectionText 
 				    selectedText.characterSet);
 
 	CFStringRef cfsVal = CFStringFromString(selectedText.Data(), selectedText.Length(), encoding);
+	if (!cfsVal && selectedText.codePage == SC_CP_UTF8) {
+		// Notepad++ macOS change: convert invalid UTF-8 with UTF16FromUTF8, as ScintillaWin does.
+		std::vector<wchar_t> utf16(UTF16Length(selectedText.AsView()));
+		UTF16FromUTF8(selectedText.AsView(), utf16.data(), utf16.size());
+		const std::vector<UniChar> chars(utf16.begin(), utf16.end());
+		cfsVal = CFStringCreateWithCharacters(kCFAllocatorDefault, chars.data(), chars.size());
+	}
 	if (!cfsVal)
 		return;
 

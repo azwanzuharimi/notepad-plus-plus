@@ -1287,6 +1287,7 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
                 op("Space to TAB (Leading)", SPACE_TO_TAB_LEAD),
             ],
         ),
+        crate::binary::paste_special_menu(mtm, t),
         sep(),
         crate::column::multi_select_menu(mtm, t, false),
         crate::column::multi_select_menu(mtm, t, true),
