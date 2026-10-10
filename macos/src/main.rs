@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+mod autoc;
 mod comment;
 mod column;
 mod config;
@@ -191,6 +192,7 @@ define_class!(
             if h.code == macros::SCN_MACRORECORD {
                 self.macro_record(scn);
             }
+            self.autoc_notify(scn);
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 let n = self.ivars().tabs.borrow().len();
                 (0..n).for_each(|i| self.refresh_title(i));
@@ -602,6 +604,13 @@ define_class!(
         #[unsafe(method(summary:))]
         fn summary_action(&self, _s: Option<&AnyObject>) {
             self.summary();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(autoComplete:))]
+        fn auto_complete_action(&self, s: &NSMenuItem) {
+            self.autoc_cmd(s.tag());
         }
     }
 
@@ -1467,6 +1476,9 @@ impl App {
             return r;
         }
         if let Some(r) = self.validate_window(item) {
+            return r;
+        }
+        if let Some(r) = self.validate_autoc(item) {
             return r;
         }
         let Some(action) = item.action() else {
