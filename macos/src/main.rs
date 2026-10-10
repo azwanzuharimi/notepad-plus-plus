@@ -27,6 +27,7 @@ mod mark;
 mod panel;
 mod prefs;
 mod print;
+mod project;
 mod run;
 mod sci;
 mod search;
@@ -1368,6 +1369,7 @@ define_class!(
                 self.build_window();
             }
             self.start_session();
+            self.projects_restore();
             self.style_load_alert();
             for a in std::env::args_os()
                 .skip(1)
@@ -1391,9 +1393,29 @@ define_class!(
             let Some(session) = self.quit_session() else {
                 return NSApplicationTerminateReply::TerminateCancel;
             };
+            if !self.projects_quit() {
+                return NSApplicationTerminateReply::TerminateCancel;
+            }
             self.udl_flush();
             self.save_on_quit(&session);
             NSApplicationTerminateReply::TerminateNow
+        }
+    }
+
+    impl App {
+        #[unsafe(method(toggleProjectPanel1:))]
+        fn toggle_project_panel_1(&self, _s: Option<&AnyObject>) {
+            self.project_toggle(0);
+        }
+
+        #[unsafe(method(toggleProjectPanel2:))]
+        fn toggle_project_panel_2(&self, _s: Option<&AnyObject>) {
+            self.project_toggle(1);
+        }
+
+        #[unsafe(method(toggleProjectPanel3:))]
+        fn toggle_project_panel_3(&self, _s: Option<&AnyObject>) {
+            self.project_toggle(2);
         }
     }
 

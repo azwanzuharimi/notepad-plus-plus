@@ -676,6 +676,20 @@ pub fn popup(mtm: MainThreadMarker) -> Retained<NSPopUpButton> {
     p
 }
 
+// NativeLangSpeaker::getAttrNameStr and getProjectPanelLangMenuStr: the name at `path` (of the Item `id` when given), or `default`.
+pub fn native_name(path: &[&str], id: Option<&str>, default: &str) -> String {
+    S.with(|st| {
+        let st = st.try_borrow().ok()?;
+        let e = st.as_ref()?.tr.as_ref()?.path(path)?;
+        let n = match id {
+            Some(i) => e.item("id", i)?,
+            None => e.attr("name")?,
+        };
+        (!n.is_empty()).then(|| n.to_string())
+    })
+    .unwrap_or_else(|| default.to_string())
+}
+
 // NativeLangSpeaker::messageBox: the native text of an English MessageBox title or message.
 pub fn message(s: &str) -> String {
     S.with(|st| {
@@ -693,6 +707,21 @@ mod tests {
     fn lang(f: &str) -> El {
         let x = NATIVE_LANGS.iter().find(|(n, _)| *n == f).unwrap().1;
         parse(x).unwrap()
+    }
+
+    #[test]
+    fn project_manager_names() {
+        let title = |k| crate::project::panel_title(k);
+        assert_eq!(title(0), "Project Panel 1");
+        let x = NATIVE_LANGS.iter().find(|(n, _)| *n == "french.xml").unwrap().1;
+        S.with(|s| *s.borrow_mut() = Some(load(Some(x), true)));
+        assert_eq!(title(2), "Projet 3");
+        let file = ["ProjectManager", "Menus", "FileMenu"];
+        assert_eq!(native_name(&file, Some("3111"), "Rename"), "Renommer");
+        assert_eq!(native_name(&file, Some("9999"), "Other"), "Other");
+        let root = ["ProjectManager", "WorkspaceRootName"];
+        assert_eq!(native_name(&root, None, "Workspace"), "Espace de travail");
+        S.with(|s| *s.borrow_mut() = None);
     }
 
     #[test]
