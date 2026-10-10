@@ -112,7 +112,7 @@ macro_rules! prefs {
 const SVP: &str = "ScintillaPrimaryView";
 const URI_SCHEMES: &str = "svn:// cvs:// git:// imap:// irc:// irc6:// ircs:// ldap:// ldaps:// news: telnet:// gopher:// ssh:// sftp:// smb:// skype: snmp:// spotify: steam:// sms: slack:// chrome:// bitcoin:";
 
-// Defaults of NppGUI, ScintillaViewParams, NewDocDefaultSettings and MatchedPairConf in Parameters.h.
+// Defaults of NppGUI, ScintillaViewParams, NewDocDefaultSettings, MatchedPairConf and PrintSettings in Parameters.h.
 prefs! {
     current_line: i64 = 1 => "ScintillaPrimaryView" "currentLineIndicator",
     current_line_frame: i64 = 1 => "ScintillaPrimaryView" "currentLineFrameWidth",
@@ -166,6 +166,25 @@ prefs! {
     backup_action: i64 = 0 => "Backup" "action",
     backup_use_dir: bool = false => "Backup" "useCustumDir",
     backup_dir: String = String::new() => "Backup" "dir",
+    print_line_number: bool = true => "Print" "lineNumber",
+    print_form_feed: bool = false => "Print" "formFeedPageBreak",
+    print_option: i64 = 3 => "Print" "printOption",
+    header_left: String = String::new() => "Print" "headerLeft",
+    header_middle: String = String::new() => "Print" "headerMiddle",
+    header_right: String = String::new() => "Print" "headerRight",
+    footer_left: String = String::new() => "Print" "footerLeft",
+    footer_middle: String = String::new() => "Print" "footerMiddle",
+    footer_right: String = String::new() => "Print" "footerRight",
+    header_font_name: String = String::new() => "Print" "headerFontName",
+    header_font_style: i64 = 0 => "Print" "headerFontStyle",
+    header_font_size: i64 = 0 => "Print" "headerFontSize",
+    footer_font_name: String = String::new() => "Print" "footerFontName",
+    footer_font_style: i64 = 0 => "Print" "footerFontStyle",
+    footer_font_size: i64 = 0 => "Print" "footerFontSize",
+    marge_left: i64 = 0 => "Print" "margeLeft",
+    marge_right: i64 = 0 => "Print" "margeRight",
+    marge_top: i64 = 0 => "Print" "margeTop",
+    marge_bottom: i64 = 0 => "Print" "margeBottom",
     autoc_action: i64 = 3 => "auto-completion" "autoCAction",
     autoc_from: i64 = 1 => "auto-completion" "triggerFromNbChar",
     autoc_ignore_numbers: bool = true => "auto-completion" "autoCIgnoreNumbers",
@@ -1076,7 +1095,7 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 16] = [
+pub const PAGES: [&str; 17] = [
     "General",
     "Editing 1",
     "Editing 2",
@@ -1086,6 +1105,7 @@ pub const PAGES: [&str; 16] = [
     "Recent Files History",
     "Indentation",
     "Highlighting",
+    "Print",
     "Searching",
     "Backup",
     "Auto-Completion",
@@ -1388,6 +1408,97 @@ fn indent_langs() -> Vec<(String, String)> {
 fn general_page(b: &mut Build, c: &mut Col, _: &mut Col) {
     b.label_at(c, "Localization", 0., 100.);
     c.put(&crate::l10n::popup(b.mtm), 104., 220., 26.);
+}
+
+// PrintSubDlg; the Add button inserts the variable in the header or footer field that has the focus.
+fn print_page(b: &mut Build, c: &mut Col, c2: &mut Col) {
+    let pr = "Print";
+    b.group(c, "Color Options", 170., |b, g| {
+        b.radio(g, "WYSIWYG", Bind::Radio(pr, "printOption", "0"));
+        b.radio(g, "Invert", Bind::Radio(pr, "printOption", "1"));
+        b.radio(g, "Black on white", Bind::Radio(pr, "printOption", "2"));
+        b.radio(g, "No background color", Bind::Radio(pr, "printOption", "3"));
+    });
+    b.group(c, "Margin Setting (Unit:mm)", 170., |b, g| {
+        b.label_at(g, "Top", 54., 40.);
+        g.y += 20.;
+        b.field_at(g, 54., 40., Bind::Num(pr, "margeTop", 0, 999));
+        g.y += 28.;
+        b.label_at(g, "Left", 0., 30.);
+        b.field_at(g, 30., 40., Bind::Num(pr, "margeLeft", 0, 999));
+        b.field_at(g, 78., 40., Bind::Num(pr, "margeRight", 0, 999));
+        b.label_at(g, "Right", 122., 40.);
+        g.y += 28.;
+        b.field_at(g, 54., 40., Bind::Num(pr, "margeBottom", 0, 999));
+        g.y += 24.;
+        b.label_at(g, "Bottom", 50., 50.);
+        g.y += 22.;
+    });
+    b.check(c, "Print line number", Bind::Check(pr, "lineNumber"));
+    b.check(c, "Print formfeed as page break", Bind::Check(pr, "formFeedPageBreak"));
+    let mut fonts = vec![String::new()];
+    fonts.extend(
+        objc2_app_kit::NSFontManager::sharedFontManager(b.mtm)
+            .availableFontFamilies()
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let mut sizes = vec![String::new()];
+    sizes.extend((6..15).map(|n| n.to_string()));
+    let mut size_vals = sizes.clone();
+    size_vals[0] = "0".into();
+    c2.x = 196.;
+    b.group(c2, "Header and Footer", 404., |b, g| {
+        b.label_at(g, "Variable:", 20., 64.);
+        let vars = NSPopUpButton::new(b.mtm);
+        if let Some(m) = vars.menu() {
+            for (t, _) in crate::print::VARS {
+                unsafe { m.addItemWithTitle_action_keyEquivalent(&ns(t), None, &NSString::new()) };
+            }
+        }
+        vars.setTag(crate::print::VAR_TAG);
+        g.put(&vars, 88., 180., 26.);
+        let add = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &ns("Add"),
+                Some(b.t),
+                Some(sel!(printAddVar:)),
+                b.mtm,
+            )
+        };
+        g.put(&add, 274., 70., 26.);
+        g.y += 34.;
+        for (title, parts, font) in [
+            ("Header", ["headerLeft", "headerMiddle", "headerRight"], ["headerFontName", "headerFontSize", "headerFontStyle"]),
+            ("Footer", ["footerLeft", "footerMiddle", "footerRight"], ["footerFontName", "footerFontSize", "footerFontStyle"]),
+        ] {
+            b.group(g, title, 384., |b, h| {
+                use objc2_app_kit::NSTextAlignment as A;
+                let align = [A::Left, A::Center, A::Right];
+                for (i, t) in ["Left part", "Middle part", "Right part"].iter().enumerate() {
+                    b.label_at(h, t, 124. * i as f64, 118.).setAlignment(A::Center);
+                }
+                h.y += 20.;
+                for (i, a) in parts.iter().enumerate() {
+                    b.field_at(h, 124. * i as f64, 118., Bind::Text(pr, a));
+                    if let Some(k) = b.ctls.last() {
+                        k.c.setAlignment(align[i]);
+                    }
+                }
+                h.y += 30.;
+                b.popup_at(h, 0., 190., &fonts, Bind::Popup(pr, font[0], fonts.clone()));
+                b.popup_at(h, 194., 56., &sizes, Bind::Popup(pr, font[1], size_vals.clone()));
+                for (i, (t, bit)) in [("Bold", 1), ("Italic", 2)].into_iter().enumerate() {
+                    let k = unsafe {
+                        NSButton::checkboxWithTitle_target_action(&ns(t), None, None, b.mtm)
+                    };
+                    h.put(&k, 256. + 62. * i as f64, 60., 20.);
+                    b.reg(k.into_super(), Bind::Bit(pr, font[2], bit), sel!(prefChanged:));
+                }
+                h.y += 32.;
+            });
+        }
+    });
 }
 
 fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
@@ -1699,6 +1810,7 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
                 });
             });
         }),
+        page(b, &print_page),
         page(b, &|b, c, _| {
             b.group(c, "When Find Dialog is Invoked", 560., |b, g| {
                 b.check(
@@ -2270,7 +2382,7 @@ impl App {
                 let old = p.get(g, a).trim().parse::<i64>().unwrap_or(0);
                 let new = if on(c) { old | bit } else { old & !bit };
                 // MarginsBorderEdgeSubDlg: change history that was off starts at the next launch.
-                if old == 0 && new != 0 && !warned {
+                if a == "isChangeHistoryEnabled" && old == 0 && new != 0 && !warned {
                     UI.with(|u| u.borrow_mut().as_mut().map(|u| u.warned = true));
                     self.alert(
                         "Notepad++ needs to be relaunched",
@@ -2466,6 +2578,7 @@ mod tests {
             "struct ScintillaViewParams",
             "struct NewDocDefaultSettings final",
             "class MatchedPairConf final",
+            "struct PrintSettings final",
         ]
         .iter()
         .map(|b| {
@@ -2503,6 +2616,7 @@ mod tests {
             ("se_google", "2"),
             ("cdEnabledNew", "yes"),
             ("bak_none", "0"),
+            ("SC_PRINT_COLOURONWHITE", "3"),
         ];
         if let Some((_, x)) = named.iter().find(|(k, _)| *k == v) {
             return x.to_string();
@@ -2580,6 +2694,13 @@ mod tests {
             ("snapshotBackupTiming", "_snapshotBackupTiming"),
             ("action", "_backup"),
             ("useCustumDir", "_useDir"),
+            ("lineNumber", "_printLineNumber"),
+            ("formFeedPageBreak", "_printFormFeedPageBreak"),
+            ("printOption", "_printOption"),
+            ("headerFontStyle", "_headerFontStyle"),
+            ("headerFontSize", "_headerFontSize"),
+            ("footerFontStyle", "_footerFontStyle"),
+            ("footerFontSize", "_footerFontSize"),
             ("autoCAction", "_autocStatus"),
             ("triggerFromNbChar", "_autocFromLen"),
             ("autoCIgnoreNumbers", "_autocIgnoreNumbers"),
@@ -2606,9 +2727,23 @@ mod tests {
             "lastUsedDirPath",
             "searchEngineCustom",
             "dir",
+            "headerLeft",
+            "headerMiddle",
+            "headerRight",
+            "footerLeft",
+            "footerMiddle",
+            "footerRight",
+            "headerFontName",
+            "footerFontName",
         ];
+        // PrintSettings sets _marge to 0 in its constructor.
+        let zero = ["margeLeft", "margeRight", "margeTop", "margeBottom"];
         let p = Prefs::default();
         for (g, a) in Prefs::KEYS {
+            if zero.contains(a) {
+                assert_eq!(p.get(g, a), "0", "{g} {a}");
+                continue;
+            }
             if no_default.contains(a) {
                 assert_eq!(p.get(g, a), "", "{g} {a}");
                 continue;

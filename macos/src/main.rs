@@ -26,6 +26,7 @@ mod macros;
 mod mark;
 mod panel;
 mod prefs;
+mod print;
 mod run;
 mod sci;
 mod search;
@@ -1273,6 +1274,23 @@ define_class!(
         #[unsafe(method(toggleCharPanel:))]
         fn toggle_char_panel(&self, _s: Option<&AnyObject>) {
             self.toggle_panel(docking::CHARS);
+        }
+    }
+
+    impl App {
+        #[unsafe(method(filePrint:))]
+        fn file_print_action(&self, _s: Option<&AnyObject>) {
+            self.file_print(true);
+        }
+
+        #[unsafe(method(filePrintNow:))]
+        fn file_print_now_action(&self, _s: Option<&AnyObject>) {
+            self.file_print(false);
+        }
+
+        #[unsafe(method(printAddVar:))]
+        fn print_add_var_action(&self, s: &NSButton) {
+            self.print_add_var(s);
         }
     }
 
