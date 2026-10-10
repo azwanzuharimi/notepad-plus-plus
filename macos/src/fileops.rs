@@ -91,6 +91,8 @@ pub fn file_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             vec![
                 item(mtm, "Finder", sel!(openFolderFinder:), "", t),
                 item(mtm, "Terminal", sel!(openFolderTerminal:), "", t),
+                NSMenuItem::separatorItem(mtm),
+                item(mtm, "Folder as Workspace", sel!(containingFolderAsWorkspace:), "", t),
             ],
         ),
         item(
@@ -100,6 +102,7 @@ pub fn file_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             "",
             t,
         ),
+        item(mtm, "Open Folder as Workspace...", sel!(openFolderAsWorkspace:), "", t),
         item(mtm, "Reload from Disk", sel!(reloadFromDisk:), "r", t),
         item(mtm, "Save", sel!(saveDocument:), "s", t),
         item(mtm, "Save As...", sel!(saveDocumentAs:), "S", t),

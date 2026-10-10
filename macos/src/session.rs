@@ -255,10 +255,14 @@ fn history_xml(r: &Recent) -> String {
 
 // config.xml with a new History element; the other elements stay as they are.
 pub fn write_history(existing: Option<&str>, rec: &Recent) -> Result<String, String> {
+    replace_element(existing, "History", &history_xml(rec))
+}
+
+// config.xml with the element `name` replaced by `xml`, or added at the end; the other elements stay as they are.
+pub(crate) fn replace_element(existing: Option<&str>, name: &str, xml: &str) -> Result<String, String> {
     let Some(src) = existing.filter(|s| s.contains("<NotepadPlus")) else {
         return Ok(format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n    {}\r\n</NotepadPlus>\r\n",
-            history_xml(rec)
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n    {xml}\r\n</NotepadPlus>\r\n"
         ));
     };
     let mut r = Reader::from_str(src);
@@ -277,9 +281,9 @@ pub fn write_history(existing: Option<&str>, rec: &Recent) -> Result<String, Str
             continue;
         }
         match &ev {
-            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == "History" => {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == name => {
                 w.get_mut()
-                    .write_all(history_xml(rec).as_bytes())
+                    .write_all(xml.as_bytes())
                     .map_err(|e| e.to_string())?;
                 done = true;
                 skip = matches!(ev, Event::Start(_));
@@ -288,7 +292,7 @@ pub fn write_history(existing: Option<&str>, rec: &Recent) -> Result<String, Str
             }
             Event::End(e) if e.name().as_ref() == "NotepadPlus" && !done => {
                 w.get_mut()
-                    .write_all(format!("    {}\r\n", history_xml(rec)).as_bytes())
+                    .write_all(format!("    {xml}\r\n").as_bytes())
                     .map_err(|e| e.to_string())?;
             }
             Event::Eof => break,
@@ -382,6 +386,7 @@ pub(crate) fn save_config() -> Result<(), String> {
     read_file(&path)
         .and_then(|old| write_history(old.as_deref(), &rec))
         .and_then(|x| crate::prefs::patch_config(Some(&x)))
+        .and_then(|x| crate::filebrowser::patch_config(&x))
         .and_then(|x| write_file(&path, &x, false))
 }
 

@@ -545,6 +545,7 @@ impl App {
             Some(a) if a == sel!(viewOption:) => checked(&self.view_opts(), item.tag() as usize),
             Some(a) if a == sel!(toggleDocList:) => self.panel_visible(crate::docking::LEFT),
             Some(a) if a == sel!(toggleFunctionList:) => self.panel_visible(crate::docking::RIGHT),
+            Some(a) if self.panel_checked(a).is_some() => self.panel_checked(a) == Some(true),
             Some(a) if a == sel!(alwaysOnTop:) => self
                 .ivars()
                 .window
@@ -737,6 +738,8 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         sep(),
         item(mtm, "Summary...", sel!(summary:), "", t),
         sep(),
+        item(mtm, "Folder as Workspace", sel!(toggleFolderAsWorkspace:), "", t),
+        item(mtm, "Document Map", sel!(toggleDocMap:), "", t),
         item(mtm, "Document List", sel!(toggleDocList:), "", t),
         item(mtm, "Function List", sel!(toggleFunctionList:), "", t),
         sep(),
