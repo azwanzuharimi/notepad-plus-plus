@@ -1126,6 +1126,7 @@ pub fn settings_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retain
     vec![
         item(mtm, "Preferences...", sel!(showPreferences:), ",", t),
         crate::style_dlg::configurator_item(mtm, t),
+        crate::shortcut_mapper::menu_item(mtm, t),
         NSMenuItem::separatorItem(mtm),
         crate::style_dlg::import_menu(mtm, t),
     ]
