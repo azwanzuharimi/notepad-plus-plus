@@ -682,12 +682,31 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(application:openURLs:))]
+        fn open_urls(&self, _a: &NSApplication, urls: &objc2_foundation::NSArray<objc2_foundation::NSURL>) {
+            if self.ivars().window.get().is_none() {
+                self.build_window();
+            }
+            for url in urls {
+                if !url.isFileURL() {
+                    continue;
+                }
+                if let Some(path) = url.path() {
+                    self.open_path(Path::new(&path.to_string()));
+                }
+            }
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _n: &NSNotification) {
-            self.build_window();
+            if self.ivars().window.get().is_none() {
+                self.build_window();
+            }
             for a in std::env::args_os()
                 .skip(1)
                 .filter(|a| !a.to_string_lossy().starts_with('-'))

@@ -18,6 +18,9 @@ Not affiliated with the Notepad++ project.
 
 2026-10-10:
 
+- `bundle.sh` makes `target/bundle/Notepad++ for macOS (unofficial).app`: release build, Info.plist, icon, Scintilla cursor images, licence files, and an ad hoc signature. It is not notarised.
+- The app shows in Open With for text files and other files, and accepts files dropped on its Dock icon. It does not become the default editor (`LSHandlerRank` is `Alternate`).
+- The icon is a neutral placeholder, not the Notepad++ icon.
 - Edit menu: Delete, Begin/End Select (also in Column Mode), Insert Date Time (short and long, in the macOS locale format), Copy to Clipboard (full path, file name, folder), Indent, Convert Case to (all 8 items), Line Operations, Blank Operations, and Read-Only on Current Document.
 - Line Operations: Duplicate, Remove Duplicate Lines, Remove Consecutive Duplicate Lines, Split, Join, Move Up/Down, Remove Empty Lines (2 items), Insert Blank Line Above/Below, Reverse Line Order, and the Lexicographic, Ignoring Case, Integer, and Decimal (comma and dot) sorts. There is no Randomize, Locale, or Length sort.
 - Each line or blank operation is one undo step. It changes the selected lines, or the whole document when there is no selection, as in Notepad++. Invalid UTF-8 bytes stay unchanged.
@@ -89,6 +92,15 @@ cargo build --release
 ./target/release/notepadpp-mac samples/hello.py
 ```
 
+To make the `.app` bundle (needs `jq`; works offline):
+
+```sh
+./bundle.sh
+open -a "target/bundle/Notepad++ for macOS (unofficial).app" samples/hello.py
+```
+
+The app name, the short menu bar name (`CFBundleName`), and the bundle identifier are variables at the top of `bundle.sh`.
+
 ## Licence
 
 - The code in `macos/` is licensed under GPL-3.0-or-later, the same as Notepad++.
@@ -96,3 +108,4 @@ cargo build --release
 - The Boost files in `boostregex/boost` are licensed under the Boost Software License 1.0: see `scintilla/test/unit/LICENSE_1_0.txt`.
 - The `uchardet` files in `PowerEditor/src/uchardet` have a tri-licence: MPL 1.1, GPL 2.0 or later, or LGPL 2.1 or later (see their file headers). This app uses them under the GPL.
 - The Rust crates this app uses are licensed under MIT, Apache-2.0, Zlib, or Unlicense terms.
+- The `.app` bundle has these licences and a `README.txt` with the source code link in `Contents/Resources`. Where a Rust crate gives a choice of licences, the app uses it under MIT. `THIRD_PARTY_LICENSES.txt` holds the licence files of each Rust crate. The `objc2` crates do not ship licence files, so `bundle/licenses/objc2` holds a copy from the objc2 repository.
