@@ -1187,7 +1187,7 @@ impl App {
             NSControlStateValueOff
         });
         let format = [sel!(encodeIn:), sel!(convertTo:), sel!(eolConvert:)].contains(&action);
-        !(format && (tab.is_none() || self.ivars().replacing.get()))
+        !(format && (tab.as_ref().is_none_or(|t| t.ro) || self.ivars().replacing.get()))
             && !matches!(tag_enc(item.tag()), Enc::Cp(cp) if action == sel!(encodeIn:) && !encoding::supported(cp))
     }
 

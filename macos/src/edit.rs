@@ -17,7 +17,7 @@ use std::hash::{BuildHasher, Hasher};
 pub const SCI_CUT: u32 = 2177;
 const SCI_COPY: u32 = 2178;
 pub const SCI_CLEAR: u32 = 2180;
-pub const SCI_GETREADONLY: u32 = 2140;
+const SCI_GETSELECTIONEMPTY: u32 = 2650;
 pub const SCI_COPYALLOWLINE: u32 = 2519;
 pub const SCI_LINEDELETE: u32 = 2338;
 const SCI_LINEDUPLICATE: u32 = 2404;
@@ -432,16 +432,40 @@ fn fold(b: &[u8]) -> Vec<u8> {
 }
 
 // Sorts like the Notepad++ sorters; an error gives the index of the line that is not a number.
+// Stable merge sort that needs no total order: the Notepad++ integer comparator is not one, and sort_by can panic on it.
+fn merge_sort<T: Clone>(v: &mut [T], less: &impl Fn(&T, &T) -> bool) {
+    if v.len() < 2 {
+        return;
+    }
+    let mid = v.len() / 2;
+    merge_sort(&mut v[..mid], less);
+    merge_sort(&mut v[mid..], less);
+    let mut out = Vec::with_capacity(v.len());
+    let (mut i, mut j) = (0, mid);
+    while i < mid && j < v.len() {
+        if less(&v[j], &v[i]) {
+            out.push(v[j].clone());
+            j += 1;
+        } else {
+            out.push(v[i].clone());
+            i += 1;
+        }
+    }
+    out.extend_from_slice(&v[i..mid]);
+    out.extend_from_slice(&v[j..]);
+    v.clone_from_slice(&out);
+}
+
 pub fn sort_lines(v: &mut Vec<&[u8]>, how: Sort, desc: bool) -> Result<(), usize> {
-    let dir = |o: Ordering| if desc { o.reverse() } else { o };
+    let less = |o: Ordering| if desc { o.is_gt() } else { o.is_lt() };
     match how {
-        Sort::Lex => v.sort_by(|a, b| dir(a.cmp(b))),
+        Sort::Lex => merge_sort(v, &|a, b| less(a.cmp(b))),
         Sort::LexIgnoreCase => {
             let mut k: Vec<(Vec<u8>, &[u8])> = v.iter().map(|a| (fold(a), *a)).collect();
-            k.sort_by(|a, b| dir(a.0.cmp(&b.0)));
+            merge_sort(&mut k, &|a, b| less(a.0.cmp(&b.0)));
             *v = k.into_iter().map(|x| x.1).collect();
         }
-        Sort::Integer => v.sort_by(|a, b| dir(int_cmp(a, b))),
+        Sort::Integer => merge_sort(v, &|a, b| less(int_cmp(a, b))),
         Sort::DecimalComma | Sort::DecimalDot => {
             let mut nums = vec![];
             let mut empties = vec![];
@@ -452,7 +476,7 @@ pub fn sort_lines(v: &mut Vec<&[u8]>, how: Sort, desc: bool) -> Result<(), usize
                     None => return Err(i),
                 }
             }
-            nums.sort_by(|a, b| dir(a.0.total_cmp(&b.0)));
+            merge_sort(&mut nums, &|a, b| less(a.0.total_cmp(&b.0)));
             let nums = nums.into_iter().map(|(_, l)| l);
             *v = if desc {
                 nums.chain(empties).collect()
@@ -782,7 +806,7 @@ fn run_line_op(v: &NSView, op: LineOp) -> Result<(), usize> {
     let start = line_start(v, l1);
     let old = text(v, start, line_start(v, l2) + s(v, SCI_LINELENGTH, l2, 0));
     let whole = l2 == n - 1;
-    let new = line_op(&old, eol(v), whole, op)?;
+    let new = line_op(&old, eol(v), whole, op).map_err(|i| l1 as usize + i)?;
     undo(v, || replace(v, start, &old, &new));
     if has {
         let tail = if whole { 0 } else { eol(v).len() };
@@ -936,7 +960,7 @@ fn run_tabs(v: &NSView, f: impl Fn(&[u8]) -> Vec<u8>) {
 
 fn run_case(v: &NSView, c: Case) {
     let (a, b) = sci::selection(v);
-    if a >= b {
+    if a >= b || block_mode(v) || s(v, SCI_GETSELECTIONS, 0, 0) > 1 {
         return;
     }
     let old = text(v, a, b);
@@ -988,15 +1012,11 @@ fn run_blank_line(v: &NSView, below: bool) {
         if cur == line_count(v) - 1 {
             s(v, SCI_APPENDTEXT, e.len() as isize, e.as_ptr() as isize);
         } else {
-            insert_at(v, line_end(v, cur) + e.len() as isize, e);
+            insert_at(v, line_start(v, cur + 1), e);
         }
         s(v, SCI_SETEMPTYSELECTION, line_start(v, cur + 1), 0);
     } else {
-        let pos = if cur == 0 {
-            0
-        } else {
-            line_start(v, cur) - e.len() as isize
-        };
+        let pos = if cur == 0 { 0 } else { line_end(v, cur - 1) };
         insert_at(v, pos, e);
         s(v, SCI_SETEMPTYSELECTION, line_start(v, cur), 0);
     }
@@ -1072,13 +1092,10 @@ pub fn begin_end_select(
     None
 }
 
-pub fn read_only(v: &NSView) -> bool {
-    s(v, SCI_GETREADONLY, 0, 0) != 0
-}
 
 // Notepad++ cuts or copies the whole line when nothing is selected.
 pub fn cut_or_copy(v: &NSView, cut: bool) {
-    if has_selection(v) {
+    if s(v, SCI_GETSELECTIONEMPTY, 0, 0) == 0 {
         s(v, if cut { SCI_CUT } else { SCI_COPY }, 0, 0);
     } else {
         s(v, SCI_COPYALLOWLINE, 0, 0);
@@ -1355,7 +1372,7 @@ impl crate::App {
         let Some(t) = self.current().and_then(|i| self.tab(i)) else {
             return Some(false);
         };
-        let ro = read_only(&t.view);
+        let ro = sci::read_only(&t.view);
         Some(if a == sel!(toggleReadOnly:) {
             item.setState(state(t.ro));
             !self.ivars().replacing.get()
@@ -1469,6 +1486,39 @@ mod tests {
         assert_eq!(decimal(b"-", false), None);
         assert_eq!(decimal(b"x", false), Some(None));
         assert_eq!(decimal(b"5.", false), Some(Some(5.0)));
+    }
+
+    #[test]
+    fn numeric_sorts_do_not_panic_on_random_lines() {
+        let parts: [&[u8]; 9] = [b"x", b" ", b"9", b"A", b"1", b"-", b"0", b"b", b","];
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as usize
+        };
+        for _ in 0..200 {
+            let n = 20 + next() % 280;
+            let owned: Vec<Vec<u8>> = (0..n)
+                .map(|_| (0..next() % 6).flat_map(|_| parts[next() % parts.len()].to_vec()).collect())
+                .collect();
+            for how in [Sort::Integer, Sort::DecimalComma, Sort::DecimalDot] {
+                for desc in [false, true] {
+                    let mut v: Vec<&[u8]> = owned.iter().map(|l| &l[..]).collect();
+                    if sort_lines(&mut v, how, desc).is_ok() {
+                        assert_eq!(v.len(), n);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn merge_sort_is_stable() {
+        let mut v = vec![(1, 'a'), (0, 'b'), (1, 'c'), (0, 'd')];
+        merge_sort(&mut v, &|a, b| a.0 < b.0);
+        assert_eq!(v, [(0, 'b'), (0, 'd'), (1, 'a'), (1, 'c')]);
     }
 
     #[test]
