@@ -5,6 +5,7 @@ mod lang;
 mod panel;
 mod sci;
 mod search;
+mod tools;
 
 use encoding::Enc;
 use objc2::rc::Retained;
@@ -427,6 +428,63 @@ define_class!(
                 }
             }
             self.focus();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(hashToClipboard:))]
+        fn hash_to_clipboard_action(&self, s: &NSMenuItem) {
+            self.hash_to_clipboard(s);
+        }
+
+        #[unsafe(method(hashGenerate:))]
+        fn hash_generate(&self, s: &NSMenuItem) {
+            self.hash_show(s, false);
+        }
+
+        #[unsafe(method(hashFromFiles:))]
+        fn hash_from_files(&self, s: &NSMenuItem) {
+            self.hash_show(s, true);
+        }
+
+        #[unsafe(method(hashChooseFiles:))]
+        fn hash_choose_files_action(&self, _s: Option<&AnyObject>) {
+            self.hash_choose_files();
+        }
+
+        #[unsafe(method(hashEachLine:))]
+        fn hash_each_line(&self, _s: Option<&AnyObject>) {
+            self.hash_text_changed();
+        }
+
+        #[unsafe(method(textDidChange:))]
+        fn text_did_change(&self, _n: &NSNotification) {
+            self.hash_text_changed();
+        }
+
+        #[unsafe(method(hashCopy:))]
+        fn hash_copy_action(&self, s: &NSButton) {
+            self.hash_copy(s.tag() == 1);
+        }
+
+        #[unsafe(method(showAbout:))]
+        fn show_about_action(&self, _s: Option<&AnyObject>) {
+            self.show_about();
+        }
+
+        #[unsafe(method(showCmdLineArgs:))]
+        fn show_cmd_line_args_action(&self, _s: Option<&AnyObject>) {
+            self.show_cmd_line_args();
+        }
+
+        #[unsafe(method(openLink:))]
+        fn open_link_action(&self, s: &NSMenuItem) {
+            self.open_link(s);
+        }
+
+        #[unsafe(method(showDebugInfo:))]
+        fn show_debug_info_action(&self, _s: Option<&AnyObject>) {
+            self.show_debug_info();
         }
     }
 
@@ -1312,6 +1370,12 @@ fn main() {
         ],
     );
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
+    submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
+    submenu(mtm, &bar, "?", tools::help_menu(mtm, t));
+    if let Some(m) = bar.itemAtIndex(0).and_then(|i| i.submenu()) {
+        m.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), 0);
+        m.insertItem_atIndex(&item(mtm, "About Notepad++", sel!(showAbout:), "", t), 0);
+    }
     app.setMainMenu(Some(&bar));
     app.run();
 }
