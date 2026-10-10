@@ -106,7 +106,7 @@ const KW_CLASSES: [&str; 9] = [
 
 pub struct Setup<'a> {
     pub lexer: &'static str,
-    pub keywords: Vec<(usize, &'a str)>,
+    pub keywords: Vec<(usize, String)>,
     pub stylers: Vec<&'a str>,
     pub props: Vec<(&'static str, &'static str)>,
     pub eol_filled: Vec<usize>,
@@ -215,12 +215,22 @@ pub fn substyles(cfg: &Config, name: &str) -> Vec<(usize, Vec<String>)> {
 
 // Mirrors ScintillaEditView.cpp lexer setup: keywords, stylers, properties and EOL fill per language (no fold properties).
 pub fn setup<'a>(cfg: &'a Config, name: &'a str) -> Setup<'a> {
-    let pick = |list: &[(usize, &str, &str)]| -> Vec<(usize, &'a str)> {
+    let doxygen = (2, "cpp", "type2");
+    let pick = |list: &[(usize, &str, &str)]| -> Vec<(usize, String)> {
         list.iter()
-            .filter_map(|&(i, l, c)| Some((i, words(cfg, l, c)?)))
+            .filter_map(|&(i, l, c)| {
+                let w = words(cfg, l, c)?;
+                Some((
+                    i,
+                    if (i, l, c) == doxygen {
+                        w.to_string()
+                    } else {
+                        user_and_lang_words(cfg, l, c)
+                    },
+                ))
+            })
             .collect()
     };
-    let doxygen = (2, "cpp", "type2");
     let track = ("lexer.cpp.track.preprocessor", "0");
     let backquoted = |v| ("lexer.cpp.backquoted.strings", v);
     let (keywords, stylers, props) = match name {
@@ -298,8 +308,11 @@ pub fn setup<'a>(cfg: &'a Config, name: &'a str) -> Setup<'a> {
             let kws = own.map_or(vec![], |l| {
                 l.keywords
                     .iter()
-                    .filter_map(|(c, w)| {
-                        Some((KW_CLASSES.iter().position(|k| k == c)?, w.as_str()))
+                    .filter_map(|(c, _)| {
+                        Some((
+                            KW_CLASSES.iter().position(|k| k == c)?,
+                            user_and_lang_words(cfg, name, c),
+                        ))
                     })
                     .collect()
             });
@@ -334,11 +347,11 @@ mod tests {
             .unwrap_or_default()
     }
 
-    fn kw<'a>(s: &Setup<'a>, i: usize) -> Vec<&'a str> {
+    fn kw<'b>(s: &'b Setup, i: usize) -> Vec<&'b str> {
         s.keywords
             .iter()
             .filter(|k| k.0 == i)
-            .map(|k| k.1)
+            .map(|k| k.1.trim_start())
             .collect()
     }
 
@@ -416,6 +429,8 @@ mod tests {
         assert!(has(&s, 0, "lambda"));
         assert!(has(&s, 1, "ArithmeticError"));
         assert_eq!(s.stylers, ["python"]);
+        let perl = setup(&c, "perl");
+        assert!(has(&perl, 0, "carp") && has(&perl, 0, "croak") && has(&perl, 0, "foreach"));
     }
 
     #[test]
@@ -484,9 +499,21 @@ mod tests {
     fn substyle_lists() {
         let c = load();
         let bases = |n: &str| -> Vec<(usize, usize)> {
-            substyles(&c, n).iter().map(|(b, l)| (*b, l.len())).collect()
+            substyles(&c, n)
+                .iter()
+                .map(|(b, l)| (*b, l.len()))
+                .collect()
         };
-        for name in ["c", "cpp", "rc", "go", "javascript.js", "typescript", "python", "gdscript"] {
+        for name in [
+            "c",
+            "cpp",
+            "rc",
+            "go",
+            "javascript.js",
+            "typescript",
+            "python",
+            "gdscript",
+        ] {
             assert_eq!(bases(name), [(11, 8)], "{name}");
         }
         assert_eq!(bases("lua"), [(11, 4)]);

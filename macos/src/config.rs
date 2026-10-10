@@ -207,13 +207,27 @@ mod tests {
         let c = load();
         let styles = |n: &str| &c.lexer_styles.iter().find(|(l, _)| l == n).unwrap().1;
         let attr = styles("html").iter().find(|s| s.id == 196).unwrap();
-        assert_eq!((attr.keyword_class.as_str(), attr.keywords.as_str()), ("substyle5", "download"));
+        assert_eq!(
+            (attr.keyword_class.as_str(), attr.keywords.as_str()),
+            ("substyle5", "download")
+        );
         let perl = styles("perl").iter().find(|s| s.id == 5).unwrap();
-        assert_eq!((perl.keyword_class.as_str(), perl.keywords.as_str()), ("instre1", "carp croak"));
+        assert_eq!(
+            (perl.keyword_class.as_str(), perl.keywords.as_str()),
+            ("instre1", "carp croak")
+        );
         let cpp = styles("cpp");
         let user1 = cpp.iter().find(|s| s.id == 128).unwrap();
-        assert_eq!((user1.keyword_class.as_str(), user1.keywords.as_str()), ("substyle1", ""));
-        assert!(cpp.iter().find(|s| s.id == 11).unwrap().keyword_class.is_empty());
+        assert_eq!(
+            (user1.keyword_class.as_str(), user1.keywords.as_str()),
+            ("substyle1", "")
+        );
+        assert!(cpp
+            .iter()
+            .find(|s| s.id == 11)
+            .unwrap()
+            .keyword_class
+            .is_empty());
     }
 
     #[test]

@@ -578,6 +578,32 @@ static CFStringRef CFStringFromString(const char *s, size_t len, CFStringEncodin
 //--------------------------------------------------------------------------------------------------
 
 /**
+ * Notepad++ macOS change: convert invalid UTF-8 with UTF16FromUTF8, as ScintillaWin does.
+ * Unpaired surrogates become U+FFFD, because the pasteboard drops a string that contains them.
+ */
+static CFStringRef CFStringFromSelection(const SelectionText &selectedText) {
+	const CFStringEncoding encoding = EncodingFromCharacterSet(selectedText.codePage == SC_CP_UTF8,
+					  selectedText.characterSet);
+	CFStringRef cfsVal = CFStringFromString(selectedText.Data(), selectedText.Length(), encoding);
+	if (cfsVal || selectedText.codePage != SC_CP_UTF8)
+		return cfsVal;
+	std::vector<wchar_t> utf16(UTF16Length(selectedText.AsView()));
+	UTF16FromUTF8(selectedText.AsView(), utf16.data(), utf16.size());
+	std::vector<UniChar> chars(utf16.begin(), utf16.end());
+	for (size_t i = 0; i < chars.size(); i++) {
+		const bool lead = chars[i] >= 0xD800 && chars[i] <= 0xDBFF;
+		const bool trail = chars[i] >= 0xDC00 && chars[i] <= 0xDFFF;
+		if (lead && i + 1 < chars.size() && chars[i + 1] >= 0xDC00 && chars[i + 1] <= 0xDFFF)
+			i++;
+		else if (lead || trail)
+			chars[i] = 0xFFFD;
+	}
+	return CFStringCreateWithCharacters(kCFAllocatorDefault, chars.data(), chars.size());
+}
+
+//--------------------------------------------------------------------------------------------------
+
+/**
  * Case folders.
  */
 
@@ -1359,10 +1385,7 @@ void ScintillaCocoa::DragScroll() {
 			([type compare: ScintillaRecPboardType] != NSOrderedSame))
 		return;
 
-	CFStringEncoding encoding = EncodingFromCharacterSet(selectedText.codePage == SC_CP_UTF8,
-				    selectedText.characterSet);
-
-	CFStringRef cfsVal = CFStringFromString(selectedText.Data(), selectedText.Length(), encoding);
+	CFStringRef cfsVal = CFStringFromSelection(selectedText);
 	if (!cfsVal)
 		return;
 
@@ -1664,17 +1687,7 @@ void ScintillaCocoa::SetPasteboardData(NSPasteboard *board, const SelectionText 
 	if (selectedText.Length() == 0)
 		return;
 
-	CFStringEncoding encoding = EncodingFromCharacterSet(selectedText.codePage == SC_CP_UTF8,
-				    selectedText.characterSet);
-
-	CFStringRef cfsVal = CFStringFromString(selectedText.Data(), selectedText.Length(), encoding);
-	if (!cfsVal && selectedText.codePage == SC_CP_UTF8) {
-		// Notepad++ macOS change: convert invalid UTF-8 with UTF16FromUTF8, as ScintillaWin does.
-		std::vector<wchar_t> utf16(UTF16Length(selectedText.AsView()));
-		UTF16FromUTF8(selectedText.AsView(), utf16.data(), utf16.size());
-		const std::vector<UniChar> chars(utf16.begin(), utf16.end());
-		cfsVal = CFStringCreateWithCharacters(kCFAllocatorDefault, chars.data(), chars.size());
-	}
+	CFStringRef cfsVal = CFStringFromSelection(selectedText);
 	if (!cfsVal)
 		return;
 

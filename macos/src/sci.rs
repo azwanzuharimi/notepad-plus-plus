@@ -366,7 +366,7 @@ pub fn apply_language(v: &NSView, cfg: &Config, lang: Option<&crate::config::Lan
         );
     }
     for (i, words) in setup.keywords {
-        send_str(v, SCI_SETKEYWORDS, i, words);
+        send_str(v, SCI_SETKEYWORDS, i, &words);
     }
     for (base, lists) in lang::substyles(cfg, name) {
         let first = send(v, SCI_ALLOCATESUBSTYLES, base, lists.len() as isize);
