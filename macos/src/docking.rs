@@ -19,6 +19,8 @@ pub const RIGHT: isize = 1;
 const TITLE_H: f64 = 24.;
 const TOOLBAR_H: f64 = 28.;
 const WIDTH: f64 = 250.;
+// Port only: Notepad++ parses any size on the main thread.
+const PARSE_LIMIT: isize = 10 * 1024 * 1024;
 
 struct Item {
     label: String,
@@ -39,6 +41,7 @@ pub struct Dock {
     items: RefCell<Vec<Item>>,
     roots: RefCell<Vec<usize>>,
     key: RefCell<String>,
+    mark: Cell<(isize, isize)>,
     state: RefCell<HashMap<String, (bool, String)>>,
 }
 
@@ -236,9 +239,18 @@ impl App {
             items: RefCell::new(vec![]),
             roots: RefCell::new(vec![]),
             key: RefCell::new(String::new()),
+            mark: Cell::new((1, 0)),
             state: RefCell::new(HashMap::new()),
         });
         outer
+    }
+
+    // The view that holds the editor and the docking areas, so a bar below it can shrink it.
+    pub(crate) fn editor_area(&self) -> Option<Retained<NSView>> {
+        match self.dock_ui() {
+            Some(d) => Some(Retained::into_super(d.outer.clone())),
+            None => self.ivars().split.get().map(|s| Retained::into_super(s.clone())),
+        }
     }
 
     pub(crate) fn panel_visible(&self, side: isize) -> bool {
@@ -284,7 +296,7 @@ impl App {
         if !self.panel_visible(LEFT) {
             return;
         }
-        let d = self.dock_ui().unwrap();
+        let Some(d) = self.dock_ui() else { return };
         d.docs.reloadData();
         if let Some(i) = self.current() {
             d.docs
@@ -344,7 +356,7 @@ impl App {
         if !self.panel_visible(RIGHT) {
             return;
         }
-        let d = self.dock_ui().unwrap();
+        let Some(d) = self.dock_ui() else { return };
         let old = d.key.replace(self.file_key());
         let mine = (
             d.sort.state() == NSControlStateValueOn,
@@ -367,17 +379,25 @@ impl App {
     }
 
     fn function_list_build(&self) {
-        let d = self.dock_ui().unwrap();
+        let Some(d) = self.dock_ui() else { return };
         let tab = self.current().and_then(|i| self.tab(i));
         let parsed = tab.as_ref().and_then(|t| {
             let lang = language::tab_language(t)?;
             let p = funclist::parser_for(&lang.name)?;
-            Some((t.name.clone(), p.parse(&sci::doc(&t.view))))
+            let found = (sci::length(&t.view) <= PARSE_LIMIT).then(|| p.parse(&sci::doc(&t.view)));
+            Some((t.name.clone(), found))
         });
         let mut items = vec![];
         let mut roots = vec![];
         if let Some((name, found)) = parsed {
-            let mut nodes = funclist::tree(&found);
+            let mut nodes = match found {
+                Some(found) => funclist::tree(&found),
+                None => vec![Node {
+                    label: "File too large for Function List".into(),
+                    pos: -1,
+                    children: vec![],
+                }],
+            };
             let text = d.search.stringValue().to_string();
             if !text.is_empty() {
                 nodes = funclist::filter(&nodes, &text);
@@ -394,9 +414,10 @@ impl App {
         *d.roots.borrow_mut() = roots.clone();
         d.funcs.reloadData();
         for r in roots {
-            let obj = d.items.borrow()[r].obj.clone();
-            unsafe { d.funcs.expandItem(Some(&obj)) };
+            let obj = d.items.borrow().get(r).map(|it| it.obj.clone());
+            unsafe { d.funcs.expandItem(obj.as_deref().map(|o| o as &AnyObject)) };
         }
+        d.mark.set((1, 0));
         self.function_list_mark();
     }
 
@@ -436,8 +457,8 @@ impl App {
         item: Option<&AnyObject>,
     ) -> Option<Retained<AnyObject>> {
         self.with_children(item, |c, items| {
-            c.get(n as usize)
-                .map(|&k| Retained::into_super(Retained::into_super(Retained::into_super(items[k].obj.clone()))))
+            let it = items.get(*c.get(n as usize)?)?;
+            Some(Retained::into_super(Retained::into_super(Retained::into_super(it.obj.clone()))))
         })
         .flatten()
     }
@@ -485,32 +506,41 @@ impl App {
         if !self.panel_visible(RIGHT) {
             return;
         }
-        let d = self.dock_ui().unwrap();
+        let Some(d) = self.dock_ui() else { return };
         let Some(v) = self.editor() else { return };
         let caret = sci::selection(&v).1;
         let line = sci::send(&v, sci::SCI_LINEFROMPOSITION, caret as usize, 0);
-        let (best, parent, root) = {
+        let (from, to) = d.mark.get();
+        if from <= line && line < to {
+            return;
+        }
+        let (best, parent, root, range) = {
             let items = d.items.borrow();
-            let mut best: Option<(isize, usize, Option<usize>)> = None;
+            let mut best: Option<(isize, usize, usize)> = None;
+            let mut next = isize::MAX;
             for (k, it) in items.iter().enumerate() {
                 for &c in &it.children {
-                    let leaf = &items[c];
+                    let Some(leaf) = items.get(c) else { continue };
                     if !leaf.children.is_empty() || leaf.pos < 0 {
                         continue;
                     }
                     let l = sci::send(&v, sci::SCI_LINEFROMPOSITION, leaf.pos as usize, 0);
-                    if l <= line && best.is_none_or(|b| l > b.0) {
-                        best = Some((l, c, Some(k)));
+                    if l > line {
+                        next = next.min(l);
+                    } else if best.is_none_or(|b| l > b.0) {
+                        best = Some((l, c, k));
                     }
                 }
             }
-            let obj = |k: usize| items[k].obj.clone();
+            let obj = |k: usize| items.get(k).map(|it| it.obj.clone());
             (
-                best.map(|b| obj(b.1)),
-                best.and_then(|b| b.2).map(obj),
-                d.roots.borrow().first().map(|&r| obj(r)),
+                best.and_then(|b| obj(b.1)),
+                best.and_then(|b| obj(b.2)),
+                d.roots.borrow().first().and_then(|&r| obj(r)),
+                (best.map_or(isize::MIN, |b| b.0), next),
             )
         };
+        d.mark.set(range);
         if let Some(p) = parent {
             unsafe { d.funcs.expandItem(Some(&p)) };
         }

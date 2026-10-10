@@ -15,6 +15,7 @@ Not affiliated with the Notepad++ project.
 - Function List uses the Notepad++ parser files (`PowerEditor/installer/functionList`, built into the app) and `overrideMap.xml`, with the same Boost regex engine as Find. All 44 Notepad++ function list unit tests (`PowerEditor/Test/FunctionList`, without the UDL tests) give the expected result.
 - Function List has a search box, a Sort button, and a Reload button. Sort and search text stay for each file. A double click on a function puts its line in the middle of the editor. The function at the caret is selected. The list loads again on tab switch, save, and language change, as in Notepad++. There is no Return key action, no Preferences menu, and no "Sort functions (A to Z) by default" option.
 - Document List shows Name and Ext. columns and an icon for a modified or read-only tab. A click on a row switches to the tab. There is no context menu, no Path column, and no sort by column.
+- Function List does not parse a file larger than 10 MB and shows "File too large for Function List". This limit is only in this app: Notepad++ parses any size, and the parse blocks the window. Notepad++ uses Normal Text, so no Function List, only for files of 200 MB or more.
 - User Defined Language parsers (KRL, NppExec, Sinumerik, UniVerse BASIC) are not used, because the app has no User Defined Languages.
 
 2026-10-10 (Paste Special, substyles):

@@ -57,6 +57,21 @@ fn elem(e: &BytesStart) -> Elem {
     }
 }
 
+// Moves the open element at the top of the stack into its parent.
+fn close(stack: &mut Vec<Elem>) {
+    if stack.len() > 1 {
+        if let Some(el) = stack.pop() {
+            add(stack, el);
+        }
+    }
+}
+
+fn add(stack: &mut [Elem], el: Elem) {
+    if let Some(top) = stack.last_mut() {
+        top.children.push(el);
+    }
+}
+
 // Loads like pugixml with parse_eol: line ends become LF, attribute values keep their white space.
 fn load_xml(text: &str) -> Elem {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -65,23 +80,16 @@ fn load_xml(text: &str) -> Elem {
     loop {
         match r.read_event() {
             Ok(Event::Start(e)) => stack.push(elem(&e)),
-            Ok(Event::Empty(e)) => {
-                let el = elem(&e);
-                stack.last_mut().unwrap().children.push(el);
-            }
-            Ok(Event::End(_)) if stack.len() > 1 => {
-                let el = stack.pop().unwrap();
-                stack.last_mut().unwrap().children.push(el);
-            }
+            Ok(Event::Empty(e)) => add(&mut stack, elem(&e)),
+            Ok(Event::End(_)) => close(&mut stack),
             Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
     }
     while stack.len() > 1 {
-        let el = stack.pop().unwrap();
-        stack.last_mut().unwrap().children.push(el);
+        close(&mut stack);
     }
-    stack.pop().unwrap()
+    stack.pop().unwrap_or_default()
 }
 
 fn rule_text(file: &str) -> Option<&'static str> {
@@ -187,7 +195,7 @@ fn invert(src: &[(isize, isize)], b: isize, e: isize) -> Zones {
             v.push((w[0].1 + 1, w[1].0 - 1));
         }
     }
-    let last = src[src.len() - 1].1 + 1;
+    let last = src.last().map_or(first.1, |z| z.1) + 1;
     if last < e {
         v.push((last, e));
     }
@@ -432,7 +440,7 @@ pub struct Node {
     pub children: Vec<Node>,
 }
 
-// FunctionListPanel::reload and addEntry: one node for each class name, in the order of the parser.
+// FunctionListPanel::addEntry: the first top item with the class name gets the function, also when that item is a function.
 pub fn tree(found: &[Found]) -> Vec<Node> {
     let mut v: Vec<Node> = vec![];
     for f in found {
@@ -445,9 +453,7 @@ pub fn tree(found: &[Found]) -> Vec<Node> {
             v.push(leaf);
             continue;
         }
-        match v
-            .iter_mut()
-            .find(|n| !n.children.is_empty() && n.label == f.class)
+        match v.iter_mut().find(|n| n.label == f.class)
         {
             Some(n) => n.children.push(leaf),
             None => v.push(Node {
@@ -707,5 +713,8 @@ mod tests {
         sort(&mut t, true);
         assert_eq!(labels(&t), ["Alpha", "B", "zeta"]);
         assert_eq!(labels(&filter(&t, "ET")), ["beta", "zeta"]);
+        let merged = tree(&[f("", "Foo", 5), f("Foo", "bar", 9)]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(labels(&merged[0].children), ["bar"]);
     }
 }

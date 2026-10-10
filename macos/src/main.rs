@@ -692,6 +692,7 @@ define_class!(
             if let Some(t) = self.tab(i) {
                 sci::set_read_only(&t.view, ro || self.ivars().replacing.get());
             }
+            self.doc_list_reload();
         }
 
         #[unsafe(method(cut:))]
