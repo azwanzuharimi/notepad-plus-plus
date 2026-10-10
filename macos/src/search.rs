@@ -113,7 +113,7 @@ impl Doc {
         }
     }
 
-    fn lines(&self) -> isize {
+    pub fn lines(&self) -> isize {
         unsafe { npp_doc_lines(self.p) }
     }
 
@@ -156,6 +156,16 @@ impl Doc {
 
     pub fn undo_group(&self, begin: bool) {
         unsafe { npp_doc_undo_group(self.p, begin as c_int) }
+    }
+
+    #[cfg(test)]
+    pub fn undo(&self) {
+        unsafe { npp_doc_undo(self.p) }
+    }
+
+    #[cfg(test)]
+    pub fn set_read_only(&self, on: bool) {
+        unsafe { npp_doc_set_read_only(self.p, on as c_int) }
     }
 }
 

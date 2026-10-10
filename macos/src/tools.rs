@@ -178,7 +178,7 @@ pub const LINKS: [(&str, &str); 4] = [
     ),
 ];
 
-fn to_clipboard(s: &str) {
+pub(crate) fn to_clipboard(s: &str) {
     let pb = NSPasteboard::generalPasteboard();
     pb.clearContents();
     pb.setString_forType(&ns(s), unsafe { NSPasteboardTypeString });

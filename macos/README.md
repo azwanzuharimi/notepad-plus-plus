@@ -8,6 +8,14 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Search menu):
+
+- Search menu in the Notepad++ order: Select and Find Next/Previous, Find (Volatile) Next/Previous, Search Results Window, Next/Previous Search Result, Go to Matching Brace, Select All In-between {} [] or (), Change History, and Bookmark.
+- Shortcuts use Cmd for Ctrl (for example Cmd+F2 toggles a bookmark, Cmd+B goes to the matching brace). F2, F3, F4, and F7 are as in Notepad++.
+- Bookmarks use the Notepad++ icon in margin 1. A click in that margin toggles a bookmark. The Bookmark submenu has all ten Notepad++ commands. Each line edit is one undo action. Read-only tabs do not change.
+- Change history markers show in margin 2 by default, as in Notepad++. Clear Change History also clears the undo history, as in Notepad++. A modified tab stays modified.
+- No Incremental Search, Mark, token styles, or Find characters in range yet.
+
 2026-10-10:
 
 - Tools menu: MD5, SHA-1, SHA-256, and SHA-512, each with Generate..., Generate from files..., and Generate from selection into clipboard. The hashes come from macOS CommonCrypto.
