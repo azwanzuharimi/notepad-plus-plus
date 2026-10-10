@@ -3,7 +3,7 @@ use crate::config::attr;
 use crate::docking::{column, content_box, frame, scroll, PROJECTS};
 use crate::search::{self, FifArgs, Opts};
 use crate::session::{read_config, replace_element, write_file};
-use crate::{filebrowser, ns, App};
+use crate::{filebrowser, l10n, ns, App};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly, Message};
@@ -183,7 +183,7 @@ pub fn relative_path(file: &Path, ws: &Path) -> String {
 // ProjectPanel::getAbsoluteFilePath: PathAppend to the folder of the workspace file, which also removes "." and "..".
 pub fn absolute_path(name: &str, ws: &Path) -> PathBuf {
     let p = Path::new(name);
-    if p.is_absolute() {
+    if p.is_absolute() || windows_absolute(name) {
         return p.to_path_buf();
     }
     let mut out = ws.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -197,6 +197,13 @@ pub fn absolute_path(name: &str, ws: &Path) -> PathBuf {
         }
     }
     out
+}
+
+// PathIsRelative is false for a drive path (C:\ or C:/) and a UNC path (\\server); such a path stays as it is.
+fn windows_absolute(name: &str) -> bool {
+    let b = name.as_bytes();
+    name.starts_with(r"\\")
+        || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'))
 }
 
 // ProjectPanel TVN_ENDLABELEDIT: the last occurrence of the old label in the file path becomes the new label.
@@ -347,8 +354,9 @@ pub fn patch_config(x: &str) -> Result<String, String> {
             Some(panel) => {
                 let file = panel.file.borrow();
                 *p = (
-                    file.as_deref()
-                        .map_or(String::new(), |f| f.to_string_lossy().into_owned()),
+                    file.as_deref().map_or(panel.lost.borrow().clone(), |f| {
+                        f.to_string_lossy().into_owned()
+                    }),
                     app.panel_visible(PROJECTS[k]),
                 );
             }
@@ -427,6 +435,8 @@ pub struct Panel {
     tree: RefCell<Tree>,
     objs: RefCell<Vec<Retained<NSNumber>>>,
     file: RefCell<Option<PathBuf>>,
+    // The workspace file of config.xml that did not load; config.xml keeps it until the panel gets another workspace.
+    lost: RefCell<String>,
     dirty: Cell<bool>,
     last_dir: RefCell<Option<PathBuf>>,
 }
@@ -483,7 +493,7 @@ impl App {
 
     fn project_title(&self, k: usize) -> String {
         let file = self.project(k).and_then(|p| p.file.borrow().clone());
-        file.map_or(format!("Project Panel {}", k + 1), |f| file_name(&f))
+        file.map_or(panel_title(k), |f| file_name(&f))
     }
 
     pub(crate) fn project_build(&self, k: usize) -> Retained<NSView> {
@@ -524,21 +534,21 @@ impl App {
             outline.setDoubleAction(Some(sel!(projectOpen:)));
         }
         b.addSubview(&scroll(mtm, &outline, size.width, size.height - BAR_H));
-        let ws = NSMenu::initWithTitle(NSMenu::alloc(mtm), &ns("Workspace"));
+        let ws = NSMenu::initWithTitle(NSMenu::alloc(mtm), &ns(""));
         ws.addItem(&NSMenuItem::new(mtm));
         for (tag, title) in WORKSPACE_MENU {
-            ws.addItem(&menu_item(self, t, tag, title));
+            ws.addItem(&menu_item(self, t, "WorkspaceMenu", tag, title));
         }
-        let edit = menu("Edit");
+        let edit = menu("");
         edit.addItem(&NSMenuItem::new(mtm));
-        for (x, (title, m)) in [(4., ("Workspace", &ws)), (128., ("Edit", &edit))] {
+        for (x, (title, m)) in [(4., (entry(0), &ws)), (128., (entry(1), &edit))] {
             let p = NSPopUpButton::initWithFrame_pullsDown(
                 NSPopUpButton::alloc(mtm),
                 frame(x, size.height - BAR_H + 2., 120., 24.),
                 true,
             );
             if let Some(first) = m.itemAtIndex(0) {
-                first.setTitle(&ns(title));
+                first.setTitle(&ns(&title));
             }
             p.setMenu(Some(m));
             p.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
@@ -548,9 +558,10 @@ impl App {
             outline,
             target,
             edit,
-            tree: RefCell::new(Tree::new("Workspace")),
+            tree: RefCell::new(Tree::new(&root_name())),
             objs: RefCell::new(vec![]),
             file: RefCell::new(None),
+            lost: RefCell::new(String::new()),
             dirty: Cell::new(false),
             last_dir: RefCell::new(None),
         });
@@ -642,6 +653,7 @@ impl App {
         let Some(p) = self.project(k) else { return };
         *p.tree.borrow_mut() = tree;
         *p.file.borrow_mut() = file;
+        p.lost.borrow_mut().clear();
         p.dirty.set(false);
         unsafe { p.outline.collapseItem_collapseChildren(None, true) };
         p.outline.reloadData();
@@ -650,7 +662,7 @@ impl App {
 
     // ProjectPanel::newWorkSpace.
     fn project_new(&self, k: usize) {
-        self.project_set(k, Tree::new("Workspace"), None);
+        self.project_set(k, Tree::new(&root_name()), None);
     }
 
     // ProjectPanel::openWorkSpace with force: false when the file cannot be read or is not a workspace.
@@ -682,6 +694,9 @@ impl App {
                 .unwrap_or_default();
             if file.is_empty() || !self.project_load(k, Path::new(&file)) {
                 self.project_new(k);
+                if let Some(p) = self.project(k) {
+                    *p.lost.borrow_mut() = file;
+                }
             }
         }
     }
@@ -955,7 +970,8 @@ impl App {
                 return;
             }
             NEW_PROJECT => {
-                self.project_add(k, 0, Kind::Project, "Project Name");
+                let name = pm_name("NewProjectName", "Project Name");
+                self.project_add(k, 0, Kind::Project, &name);
                 return;
             }
             _ => {}
@@ -966,7 +982,10 @@ impl App {
         let Some(n) = p.node(i) else { return };
         match cmd {
             RENAME => self.project_rename(k, i),
-            NEW_FOLDER => self.project_add(k, i, Kind::Folder, "Folder Name"),
+            NEW_FOLDER => {
+                let name = pm_name("NewFolderName", "Folder Name");
+                self.project_add(k, i, Kind::Folder, &name);
+            }
             MOVE_UP | MOVE_DOWN => {
                 if p.tree.borrow_mut().move_by(i, cmd == MOVE_UP) {
                     self.project_reload(k);
@@ -1049,7 +1068,7 @@ impl App {
         if edit {
             m.addItem(&NSMenuItem::new(self.mtm()));
             if let Some(first) = m.itemAtIndex(0) {
-                first.setTitle(&ns("Edit"));
+                first.setTitle(&ns(&entry(1)));
             }
         } else {
             let row = p.outline.clickedRow();
@@ -1068,15 +1087,16 @@ impl App {
         else {
             return;
         };
-        let items: &[(isize, &str)] = match kind {
-            Kind::Root if edit => &[],
-            Kind::Root => &WORKSPACE_MENU,
-            Kind::Project | Kind::Folder => &FOLDER_MENU,
-            Kind::File => &FILE_MENU,
+        let (section, items): (&str, &[(isize, &str)]) = match kind {
+            Kind::Root if edit => ("", &[]),
+            Kind::Root => ("WorkspaceMenu", &WORKSPACE_MENU),
+            Kind::Project => ("ProjectMenu", &FOLDER_MENU),
+            Kind::Folder => ("FolderMenu", &FOLDER_MENU),
+            Kind::File => ("FileMenu", &FILE_MENU),
         };
         let t: &AnyObject = &p.target;
         for &(tag, title) in items {
-            m.addItem(&menu_item(self, t, tag, title));
+            m.addItem(&menu_item(self, t, section, tag, title));
         }
     }
 
@@ -1127,10 +1147,33 @@ impl App {
     }
 }
 
-fn menu_item(app: &App, t: &AnyObject, tag: isize, title: &str) -> Retained<NSMenuItem> {
+// NativeLangSpeaker::getAttrNameStr below ProjectManager.
+fn pm_name(node: &str, default: &str) -> String {
+    l10n::native_name(&["ProjectManager", node], None, default)
+}
+
+fn root_name() -> String {
+    pm_name("WorkspaceRootName", "Workspace")
+}
+
+// Notepad_plus::launchProjectPanel: PanelTitle and the panel number.
+pub fn panel_title(k: usize) -> String {
+    format!("{} {}", pm_name("PanelTitle", "Project Panel"), k + 1)
+}
+
+// The Workspace (0) and Edit (1) buttons.
+fn entry(id: usize) -> String {
+    let default = ["Workspace", "Edit"][id.min(1)];
+    l10n::native_name(&["ProjectManager", "Menus", "Entries"], Some(&id.to_string()), default)
+}
+
+// ProjectPanel::initMenus with getProjectPanelLangMenuStr.
+fn menu_item(app: &App, t: &AnyObject, section: &str, tag: isize, title: &str) -> Retained<NSMenuItem> {
     if tag == 0 {
         return NSMenuItem::separatorItem(app.mtm());
     }
+    let title = l10n::native_name(&["ProjectManager", "Menus", section], Some(&tag.to_string()), title);
+    let title = title.split('\t').next().unwrap_or_default();
     let it = crate::item(app.mtm(), title, sel!(projectCmd:), "", Some(t));
     it.setTag(tag);
     it
@@ -1257,6 +1300,14 @@ mod tests {
         );
         assert_eq!(absolute_path("../../../z.txt", ws), PathBuf::from("/z.txt"));
         assert_eq!(absolute_path("/abs/e.txt", ws), PathBuf::from("/abs/e.txt"));
+        assert_eq!(absolute_path(r"C:\Users\a.txt", ws), PathBuf::from(r"C:\Users\a.txt"));
+        assert_eq!(absolute_path("d:/x/b.txt", ws), PathBuf::from("d:/x/b.txt"));
+        assert_eq!(absolute_path(r"\\server\share\c.txt", ws), PathBuf::from(r"\\server\share\c.txt"));
+        assert_eq!(absolute_path("C:rel.txt", ws), PathBuf::from("/w/proj/C:rel.txt"));
+        let win = Path::new(r"C:\Users\a.txt");
+        let elsewhere = Path::new("/elsewhere/n.workspace");
+        assert_eq!(relative_path(&absolute_path(r"C:\Users\a.txt", ws), elsewhere), r"C:\Users\a.txt");
+        assert_eq!(relative_path(win, elsewhere), r"C:\Users\a.txt");
         assert_eq!(
             renamed_path("/a/old/old.txt", "old.txt", "new.md"),
             "/a/old/new.md"

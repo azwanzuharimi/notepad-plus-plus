@@ -181,6 +181,14 @@ define_class!(
     }
 );
 
+// The caption of a panel; a Project Panel takes its title from the localization.
+fn panel_title(id: isize) -> String {
+    match PROJECTS.iter().position(|&p| p == id) {
+        Some(k) => crate::project::panel_title(k),
+        None => PANELS.get(id as usize).map_or("", |p| p.0).to_string(),
+    }
+}
+
 // PathFindExtension: the text from the last dot, if no space follows it.
 pub fn split_ext(name: &str) -> (&str, &str) {
     match name.rfind('.') {
@@ -604,12 +612,12 @@ impl App {
         s.tabs.setHidden(open.len() < 2);
         s.tabs.setSegmentCount(open.len() as isize);
         for (k, id) in open.iter().enumerate() {
-            s.tabs.setLabel_forSegment(&ns(PANELS[*id as usize].0), k as isize);
+            s.tabs.setLabel_forSegment(&ns(&panel_title(*id)), k as isize);
         }
         if let Some(k) = open.iter().position(|&x| x == active) {
             s.tabs.setSelectedSegment(k as isize);
         }
-        s.title.setStringValue(&ns(PANELS.get(active as usize).map_or("", |p| p.0)));
+        s.title.setStringValue(&ns(&panel_title(active)));
         s.close.setTag(active);
         self.panels_timer();
     }
