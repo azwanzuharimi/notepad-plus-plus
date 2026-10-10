@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Default)]
 pub struct Language {
@@ -40,7 +41,7 @@ pub fn rgb_to_bgr(hex: &str) -> Option<isize> {
 const LANGS: &str = include_str!("../../PowerEditor/src/langs.model.xml");
 const STYLERS: &str = include_str!("../../PowerEditor/src/stylers.model.xml");
 
-fn attr(e: &BytesStart, key: &str) -> String {
+pub fn attr(e: &BytesStart, key: &str) -> String {
     e.try_get_attribute(key)
         .ok()
         .flatten()
@@ -128,6 +129,11 @@ pub fn load() -> Config {
         }
     }
     c
+}
+
+// Folder of the user files: config.xml, session.xml and shortcuts.xml.
+pub fn app_support_dir() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/notepadpp-mac"))
 }
 
 #[cfg(test)]

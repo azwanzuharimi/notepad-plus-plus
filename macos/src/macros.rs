@@ -379,10 +379,7 @@ pub fn with_store<R>(f: impl FnOnce(&mut Shortcuts) -> R) -> R {
 }
 
 fn file() -> Option<PathBuf> {
-    Some(
-        PathBuf::from(std::env::var_os("HOME")?)
-            .join("Library/Application Support/notepadpp-mac/shortcuts.xml"),
-    )
+    Some(crate::config::app_support_dir()?.join("shortcuts.xml"))
 }
 
 // The text of the file, or None when the file does not exist.

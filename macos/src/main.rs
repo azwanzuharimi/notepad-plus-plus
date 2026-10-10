@@ -13,6 +13,7 @@ mod sci;
 mod search;
 mod search_extras;
 mod shortcuts;
+mod session;
 mod tools;
 mod view;
 
@@ -792,6 +793,38 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(openRecentFile:))]
+        fn open_recent_file_action(&self, s: &NSMenuItem) {
+            self.open_recent_index(s.tag());
+        }
+
+        #[unsafe(method(restoreRecentClosed:))]
+        fn restore_recent_closed_action(&self, _s: Option<&AnyObject>) {
+            self.restore_recent_closed();
+        }
+
+        #[unsafe(method(openAllRecent:))]
+        fn open_all_recent_action(&self, _s: Option<&AnyObject>) {
+            self.open_all_recent();
+        }
+
+        #[unsafe(method(emptyRecent:))]
+        fn empty_recent_action(&self, _s: Option<&AnyObject>) {
+            self.empty_recent();
+        }
+
+        #[unsafe(method(loadSession:))]
+        fn load_session_action(&self, _s: Option<&AnyObject>) {
+            self.load_session_file();
+        }
+
+        #[unsafe(method(saveSession:))]
+        fn save_session_action(&self, _s: Option<&AnyObject>) {
+            self.save_session_file();
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -800,6 +833,7 @@ define_class!(
             if self.ivars().window.get().is_none() {
                 self.build_window();
             }
+            self.start_session();
             for a in std::env::args_os()
                 .skip(1)
                 .filter(|a| !a.to_string_lossy().starts_with('-'))
@@ -818,6 +852,7 @@ define_class!(
                 self.alert("Replace in Files is still running.", "Quit again when it is done.", &["OK"]);
                 return NSApplicationTerminateReply::TerminateCancel;
             }
+            let session = self.current_session(false);
             let n = self.ivars().tabs.borrow().len();
             for i in 0..n {
                 self.tab_view().selectTabViewItemAtIndex(i as isize);
@@ -825,6 +860,7 @@ define_class!(
                     return NSApplicationTerminateReply::TerminateCancel;
                 }
             }
+            self.save_on_quit(&session);
             NSApplicationTerminateReply::TerminateNow
         }
     }
@@ -1223,6 +1259,7 @@ impl App {
     }
 
     fn open_path(&self, path: &Path) {
+        self.recent_remove(path);
         if let Some(t) = self.find_open(path, None).and_then(|i| self.tab(i)) {
             self.tab_view().selectTabViewItem(Some(&t.item));
             return;
@@ -1410,6 +1447,9 @@ impl App {
             return false;
         };
         let renamed = tab.path.as_deref() != Some(&path);
+        if renamed {
+            self.recent_saved_as(tab.path.as_deref(), &path);
+        }
         if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
             t.name = path
                 .file_name()

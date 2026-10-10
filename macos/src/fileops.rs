@@ -120,6 +120,9 @@ pub fn file_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         ),
         item(mtm, "Move to Trash", sel!(moveToTrash:), "", t),
     ]
+    .into_iter()
+    .chain(crate::session::session_menu(mtm, t))
+    .collect()
 }
 
 impl App {
@@ -201,6 +204,7 @@ impl App {
     // Removes the tabs without a question; an empty window gets a new tab.
     pub(crate) fn drop_tabs(&self, items: &[Retained<NSTabViewItem>]) {
         for item in items {
+            self.recent_closed(item);
             self.ivars()
                 .tabs
                 .borrow_mut()
