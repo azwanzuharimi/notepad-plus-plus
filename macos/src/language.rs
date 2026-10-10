@@ -124,12 +124,12 @@ pub fn comment_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Retained<NS
     nested(mtm, "Comment/Uncomment", items)
 }
 
-// The language set from the Language menu, else the language of the file name (the tab name for a new file).
+// The language set from the Language menu, else the language of the file name or first line (the tab name for a new file).
 pub(crate) fn tab_language(t: &Tab) -> Option<&'static Language> {
     match &t.lang {
         Some(n) => cfg().languages.iter().find(|l| &l.name == n),
         None => match t.path.as_deref() {
-            Some(p) => lang::language_for_path(cfg(), p),
+            Some(p) => lang::language_for_file(cfg(), p, t.first_line),
             None => lang::language_for_path(cfg(), Path::new(&t.name)).or_else(crate::prefs::new_doc_language),
         },
     }

@@ -8,6 +8,13 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Files in and out):
+
+- Drop files from Finder on the window or an editor to open them. A dropped folder opens in the Folder as Workspace panel. With Preferences > Default Directory > "Open all files of folder instead of launching Folder as Workspace on folder dropping", all files of the folder and its sub-folders open, but not files in hidden folders. More than 200 files show a question first. Files and folders together show the Notepad++ "Invalid action" message. Text drags in the editor work as before.
+- When no UDL and no built-in language match the file name, the first line sets the language at open, as in Notepad++: a `#!` line with sh, python, perl, php, ruby or node, and `<?xml`, `<?php`, `<html`, `<!DOCTYPE html` or `<?`. After Save As or Rename, a new extension with a language wins.
+- View > View Current File in > Firefox, Chrome, Edge opens the saved file in that browser. An item is disabled when the file is not on disk or the browser is not installed. There is no IE item.
+- Not done: "Remember inaccessible files from past session". A drop opens files in the active view, not in the view under the pointer. Save As does not read the first line again. ISO 8859-10 is not added, because Notepad++ does not show it in the Encoding menu.
+
 2026-10-10 (Shortcut Mapper):
 
 - Settings > Shortcut Mapper...: tabs Main menu, Macros, Run commands and Scintilla commands, with Name, Shortcut and Category columns, a filter, and Modify, Clear, Delete and Close. Rows with a conflict are red, and the conflict list shows below the table, as in Notepad++. A double click opens Modify. There is no Plugin commands tab.

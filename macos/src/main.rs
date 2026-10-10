@@ -58,6 +58,7 @@ use objc2_app_kit::{
     NSTableView, NSTableViewDataSource, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
     NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
+use objc2_app_kit::{NSDragOperation, NSDraggingInfo};
 use objc2_foundation::{NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use panel::{Controls, Form};
 use search::{FifArgs, FifOut, Line, Next, Wrap};
@@ -107,6 +108,7 @@ struct Tab {
     ro: bool,
     file_ro: bool,
     lang: Option<String>,
+    first_line: Option<&'static str>,
     mtime: Option<std::time::SystemTime>,
 }
 
@@ -235,6 +237,7 @@ define_class!(
             self.autoc_notify(scn);
             backup::notify(scn);
             self.views_notify(scn);
+            self.uri_dropped(scn);
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 self.refresh_labels();
             }
@@ -790,6 +793,29 @@ define_class!(
         #[unsafe(method(comment:))]
         fn comment_action(&self, s: &NSMenuItem) {
             self.comment(s.tag());
+        }
+    }
+
+    impl App {
+        #[unsafe(method(viewInBrowser:))]
+        fn view_in_browser_action(&self, s: &NSMenuItem) {
+            self.view_in_browser(s.tag());
+        }
+
+        #[unsafe(method(dropPending:))]
+        fn drop_pending_action(&self, _s: Option<&AnyObject>) {
+            self.drop_pending();
+        }
+
+        #[unsafe(method(draggingEntered:))]
+        fn dragging_entered(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            fileops::drag_operation(&info.draggingPasteboard())
+        }
+
+        #[unsafe(method(performDragOperation:))]
+        fn perform_drag_operation(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
+            self.drop_paths(&fileops::pasteboard_files(&info.draggingPasteboard()));
+            true
         }
     }
 
@@ -1521,6 +1547,7 @@ impl App {
         unsafe { w.setReleasedWhenClosed(false) };
         w.setTitle(&NSString::from_str("Notepad++"));
         w.setDelegate(Some(ProtocolObject::from_ref(self)));
+        fileops::accept_file_drops(&w);
         toolbar::attach(&w);
         let tv = Retained::into_super(views::DocTabs::new(mtm));
         tv.setDelegate(Some(ProtocolObject::from_ref(self)));
@@ -1850,8 +1877,11 @@ impl App {
         );
         let file_ro = path.as_deref().is_some_and(edit_extras::file_read_only);
         sci::set_read_only(&view, file_ro || self.ivars().replacing.get());
+        let first_line = path
+            .as_deref()
+            .and_then(|p| lang::first_line_language(cfg(), p, udl::matches_file(p), text));
         let lang = match path.as_deref() {
-            Some(p) => lang::language_for_path(cfg(), p),
+            Some(p) => lang::language_for_file(cfg(), p, first_line),
             None => prefs::new_doc_language(),
         };
         self.setup_editor(&view, lang);
@@ -1881,6 +1911,7 @@ impl App {
             ro: false,
             file_ro,
             lang: None,
+            first_line,
             mtime,
         });
         self.apply_udl_at(at);
@@ -1917,6 +1948,9 @@ impl App {
             return r;
         }
         if let Some(r) = self.validate_views(item) {
+            return r;
+        }
+        if let Some(r) = self.validate_browser(item) {
             return r;
         }
         let Some(action) = item.action() else {

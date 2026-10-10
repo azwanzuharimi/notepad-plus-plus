@@ -5,7 +5,8 @@ use objc2::runtime::{AnyObject, Sel};
 use objc2::{sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSEventModifierFlags, NSMenuItem, NSModalResponseOK,
-    NSSavePanel, NSTabViewItem, NSTextField, NSWorkspace,
+    NSDragOperation, NSPasteboard, NSPasteboardTypeFileURL, NSSavePanel, NSTabViewItem,
+    NSTextField, NSWindow, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSFileManager, NSPoint, NSRect, NSSize, NSURL};
 use std::path::{Path, PathBuf};
@@ -489,6 +490,149 @@ impl App {
     }
 }
 
+pub const SCN_URIDROPPED: u32 = 2015;
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Drop {
+    Nothing,
+    Open,
+    Workspace,
+    Mixed,
+}
+
+// Notepad_plus::dropFiles: open the paths, launch Folder as Workspace on folders, or refuse a mix in that mode.
+pub fn drop_action(folders: usize, files: usize, open_all: bool) -> Drop {
+    match (folders, files) {
+        (0, 0) => Drop::Nothing,
+        _ if open_all || folders == 0 => Drop::Open,
+        (_, 0) => Drop::Workspace,
+        _ => Drop::Mixed,
+    }
+}
+
+// Notepad_plus::doOpen on a folder: all files, also in sub-folders, but not in hidden folders.
+pub fn folder_files(dir: &Path) -> Vec<PathBuf> {
+    search::walk(dir, &["*".to_string()], true, false)
+}
+
+// The window takes file drops outside the editors; the editors send SCN_URIDROPPED.
+pub(crate) fn accept_file_drops(w: &NSWindow) {
+    w.registerForDraggedTypes(&NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]));
+}
+
+pub(crate) fn pasteboard_files(pb: &NSPasteboard) -> Vec<PathBuf> {
+    let Some(items) = pb.pasteboardItems() else {
+        return vec![];
+    };
+    items
+        .iter()
+        .filter_map(|i| {
+            let s = i.stringForType(unsafe { NSPasteboardTypeFileURL })?;
+            Some(PathBuf::from(NSURL::URLWithString(&s)?.path()?.to_string()))
+        })
+        .collect()
+}
+
+pub(crate) fn drag_operation(pb: &NSPasteboard) -> NSDragOperation {
+    if pasteboard_files(pb).is_empty() {
+        NSDragOperation::None
+    } else {
+        NSDragOperation::Copy
+    }
+}
+
+thread_local! {
+    static DROPPED: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[repr(C)]
+struct UriNotify {
+    hwnd_from: *mut std::ffi::c_void,
+    id_from: usize,
+    code: u32,
+    position: isize,
+    ch: i32,
+    modifiers: i32,
+    modification_type: i32,
+    text: *const std::ffi::c_char,
+}
+
+impl App {
+    // Scintilla sends SCN_URIDROPPED one time for each file; the paths are collected and opened together.
+    pub(crate) fn uri_dropped(&self, scn: *const std::ffi::c_void) {
+        let n = unsafe { &*(scn as *const UriNotify) };
+        if n.code != SCN_URIDROPPED || n.text.is_null() {
+            return;
+        }
+        let path = unsafe { std::ffi::CStr::from_ptr(n.text) };
+        let path = PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(path.to_bytes()));
+        let first = DROPPED.with(|d| {
+            let mut d = d.borrow_mut();
+            d.push(path);
+            d.len() == 1
+        });
+        if first {
+            let _: () = unsafe {
+                objc2::msg_send![self, performSelector: sel!(dropPending:), withObject: None::<&AnyObject>, afterDelay: 0.0f64]
+            };
+        }
+    }
+
+    pub(crate) fn drop_pending(&self) {
+        let paths = DROPPED.with(|d| std::mem::take(&mut *d.borrow_mut()));
+        self.drop_paths(&paths);
+    }
+
+    // Notepad_plus::dropFiles.
+    pub(crate) fn drop_paths(&self, paths: &[PathBuf]) {
+        let folders: Vec<&PathBuf> = paths.iter().filter(|p| p.is_dir()).collect();
+        let open_all = crate::prefs::get().drop_folder_open_files;
+        match drop_action(folders.len(), paths.len() - folders.len(), open_all) {
+            Drop::Nothing => {}
+            Drop::Open => {
+                for p in paths {
+                    if p.is_dir() {
+                        self.open_folder_files(p);
+                    } else {
+                        self.open_path(p);
+                    }
+                }
+            }
+            Drop::Workspace => {
+                if !self.panel_visible(crate::docking::FOLDERS) {
+                    self.dock_open_panel(crate::docking::FOLDERS);
+                }
+                for f in folders {
+                    self.folders_add_root(f);
+                }
+            }
+            Drop::Mixed => {
+                self.alert(
+                    "Invalid action",
+                    "You can only drop files or folders but not both, because you're in dropping Folder as Project mode.\nYou have to enable \"Open all files of folder instead of launching Folder as Workspace on folder dropping\" in \"Default Directory\" section of Preferences dialog to make this operation work.",
+                    &["OK"],
+                );
+            }
+        }
+    }
+
+    fn open_folder_files(&self, dir: &Path) {
+        let files = folder_files(dir);
+        if files.len() > 200
+            && self.alert(
+                "Amount of files to open is too large",
+                &format!("{} files are about to be opened.\nAre you sure to open them?", files.len()),
+                &["Yes", "No"],
+            ) != NSAlertFirstButtonReturn
+        {
+            return;
+        }
+        for f in &files {
+            self.open_path(f);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,5 +681,30 @@ mod tests {
         assert_eq!(to_close(Close::Unchanged, 2, &u), [3, 2, 0]);
         assert!(to_close(Close::Left, 0, &u).is_empty());
         assert!(to_close(Close::Right, 4, &u).is_empty());
+    }
+
+    #[test]
+    fn drop_actions() {
+        assert_eq!(drop_action(0, 0, false), Drop::Nothing);
+        assert_eq!(drop_action(0, 2, false), Drop::Open);
+        assert_eq!(drop_action(2, 0, false), Drop::Workspace);
+        assert_eq!(drop_action(1, 1, false), Drop::Mixed);
+        assert_eq!(drop_action(1, 1, true), Drop::Open);
+        assert_eq!(drop_action(2, 0, true), Drop::Open);
+    }
+
+    #[test]
+    fn folder_files_skip_hidden_folders() {
+        let d = tmp("drop_folder");
+        for f in ["a.txt", ".hidden.txt", "sub/b.c", "sub/deep/c.md", ".git/config"] {
+            let p = d.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "x").unwrap();
+        }
+        let got: Vec<String> = folder_files(&d)
+            .iter()
+            .map(|p| p.strip_prefix(&d).unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got, [".hidden.txt", "a.txt", "sub/a.txt", "sub/b.c", "sub/deep/c.md"]);
     }
 }

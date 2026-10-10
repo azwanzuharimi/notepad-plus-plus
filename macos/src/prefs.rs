@@ -143,6 +143,7 @@ prefs! {
     open_save_dir: i64 = 0 => "openSaveDir" "value",
     default_dir: String = String::new() => "openSaveDir" "defaultDirPath",
     last_used_dir: String = String::new() => "openSaveDir" "lastUsedDirPath",
+    drop_folder_open_files: bool = false => "MISC" "isFolderDroppedOpenFiles",
     check_history_files: bool = false => "CheckHistoryFiles" "",
     tab_size: i64 = 4 => "TabSetting" "size",
     tab_replace: bool = false => "TabSetting" "replaceBySpace",
@@ -1766,6 +1767,11 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
                 b.button_at(g, 390., 50., "...", Bind::Browse, sel!(prefBrowse:));
                 g.y += 30.;
             });
+            b.check(
+                c,
+                "Open all files of folder instead of launching Folder as Workspace on folder dropping",
+                Bind::Check("MISC", "isFolderDroppedOpenFiles"),
+            );
         }),
         page(b, &|b, c, _| {
             b.group(c, "Recent Files History", 480., |b, g| {
@@ -2753,6 +2759,7 @@ mod tests {
             ("fillFindFieldSelectCaret", "_fillFindFieldSelectCaret"),
             ("fillFindWhatThreshold", "_fillFindWhatThreshold"),
             ("RememberLastSession", "_rememberLastSession"),
+            ("isFolderDroppedOpenFiles", "_isFolderDroppedOpenFiles"),
             ("isSnapshotMode", "_isSnapshotMode"),
             ("snapshotBackupTiming", "_snapshotBackupTiming"),
             ("action", "_backup"),
