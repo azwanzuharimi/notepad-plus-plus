@@ -520,6 +520,10 @@ pub fn replace_in_files_status(o: &FifOut, not_reloaded: &[PathBuf]) -> String {
             list(&o.unreadable)
         );
     }
+    if !o.read_only.is_empty() {
+        let r = REPLACE_ALL_READ_ONLY.trim_end_matches('.');
+        m += &format!("\n{r}: {}", list(&o.read_only));
+    }
     for (p, e) in &o.errors {
         m += &format!("\nCannot write {}: {e}", file_name(p));
     }
@@ -741,6 +745,7 @@ pub struct FifOut {
     // Files open in a tab: Replace in Files replaces them in the tab on the main thread.
     pub open: Vec<PathBuf>,
     pub unreadable: Vec<PathBuf>,
+    pub read_only: Vec<PathBuf>,
     pub errors: Vec<(PathBuf, String)>,
 }
 
@@ -1163,6 +1168,14 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(d.join("sub/c.txt")).unwrap(),
             "foo bar\nbaz foo foo\n"
+        );
+        let ro = FifOut {
+            read_only: vec![d.join("sub/c.txt")],
+            ..Default::default()
+        };
+        assert_eq!(
+            replace_in_files_status(&ro, &[]),
+            "Replace in Files: 0 occurrences were replaced.\nReplace All: Cannot replace text. The current document is read only: c.txt"
         );
         let mut rest = FifOut::default();
         replace_file(&d.join("sub/c.txt"), &r.opts, &mut rest).unwrap();

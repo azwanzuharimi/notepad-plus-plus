@@ -275,12 +275,23 @@ impl App {
         if again {
             return self.inc_update(Change::Advance(true));
         }
+        let selected = self.editor().map(|v| {
+            let (s, e) = sci::selection(&v);
+            String::from_utf8_lossy(&sci::doc(&v).range(s, e)).into_owned()
+        });
+        let seeded = selected.is_some_and(|s| !s.is_empty() && {
+            self.with_bar(|b| b.field.setStringValue(&ns(&s)));
+            true
+        });
         self.with_bar(|b| {
             self.set_bar_visible(b, true);
             let w = self.ivars().window.get().unwrap();
             w.makeFirstResponder(Some(&b.field));
             unsafe { b.field.selectText(None) };
         });
+        if seeded {
+            self.inc_update(Change::Text);
+        }
     }
 
     pub(crate) fn close_incremental_search(&self) {

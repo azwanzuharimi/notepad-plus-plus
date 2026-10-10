@@ -67,6 +67,7 @@ impl App {
             };
             let doc = sci::doc(&t.view);
             if doc.read_only() {
+                out.read_only.push(f);
                 continue;
             }
             let n = search::replace_all(&doc, o, (0, doc.len()))?;
