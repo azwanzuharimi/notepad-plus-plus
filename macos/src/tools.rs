@@ -378,7 +378,7 @@ impl App {
         let path = std::env::current_exe()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        let cmd = std::env::args().collect::<Vec<_>>().join(" ");
+        let cmd = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         let info = debug_info(&os, &path, &cmd);
         let a = NSAlert::new(self.mtm());
         a.setMessageText(&ns("Debug Info"));
