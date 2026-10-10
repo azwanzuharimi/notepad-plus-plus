@@ -111,14 +111,15 @@ Not affiliated with the Notepad++ project.
 - OEM 720 is in the menu but disabled, because CoreFoundation does not support it. OEM 858 uses the OEM 850 table with the euro sign at 0xD5.
 - UTF-16 LE without a BOM uses a simple test (more than half of the high bytes are zero) in place of the Windows `IsTextUnicode` function.
 - The status bar shows only the single selection forms (Pos and Sel: N | M), not the rectangular or multiple selection forms.
-- Find in Files and Replace in Files read each file in the encoding of its open tab, or else in its detected encoding. Replace in Files writes it back in the same encoding. Open tabs reload in their own encoding.
+- Replace in Files writes each file back in its detected encoding.
 
 - Search menu: Find, Replace, Find Next, Find Previous, Find in Files, and Go to Line.
 - Find and Replace use the Notepad++ Boost regex engine (`boostregex/`), built into Scintilla with `SCI_OWNREGEX`.
 - One Find panel holds both the Find and the Replace fields. There is no Mark tab, no search history, and no "In selection" or "Backward direction" option.
-- Find in Files reads files from disk, also when a file is open in a tab with unsaved changes. It skips files that contain a NUL byte, but not UTF-16 files with a BOM.
-- Replace in Files writes to disk. It skips files that are open in a tab with unsaved changes, and names them in the status line. Open tabs of changed files reload.
-- The Search results panel does not fold old searches.
+- Find in Files searches the text of a tab for a file that is open, also when the tab has unsaved changes. For other files it reads the disk copy. It skips files that contain a NUL byte, but not UTF-16 files with a BOM.
+- Replace in Files replaces in the tab for a file that is open, as one undo step, and then saves the tab, as Notepad++ does (the save also writes the other unsaved changes of that tab). It writes other files on disk. A read only tab is not changed, and the status line names it.
+- The Search results panel folds: a new search collapses the old search blocks, a double-click on a header line folds or unfolds it, and the fold margin uses the Notepad++ plus and minus markers.
+- Search > Incremental Search (Opt+Cmd+I, Ctrl+Alt+I in Notepad++) shows a bar at the bottom of the window, with the selected text as the search text: Find:, < and >, Match case, Highlight all, Count, and the status ("Phrase not found", "Reached end of page, continued from top"). It searches as you type. Return finds the next match, Shift+Return the previous match, and Esc closes the bar. Highlight all uses the "Incremental highlight all" colour (indicator 28). The text field is red when the phrase is not found. Find Next and Find Previous in the menu do not use the bar text.
 
 2026-10-07:
 

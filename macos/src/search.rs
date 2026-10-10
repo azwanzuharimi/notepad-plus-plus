@@ -226,6 +226,10 @@ impl Opts {
         self.bytes(&self.replace)
     }
 
+    pub fn find_in(&self, doc: &Doc, s: isize, e: isize) -> Result<Option<(isize, isize)>, String> {
+        doc.find(s, e, &self.bytes(&self.find), self.flags())
+    }
+
     pub fn regex(&self) -> bool {
         self.mode == Mode::Regex
     }
@@ -510,17 +514,15 @@ pub fn replace_in_files_status(o: &FifOut, not_reloaded: &[PathBuf]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    if !o.skipped.is_empty() {
-        m += &format!(
-            "\nSkipped (unsaved changes in an open tab): {}",
-            list(&o.skipped)
-        );
-    }
     if !o.unreadable.is_empty() {
         m += &format!(
             "\nSkipped (cannot read without loss in its encoding): {}",
             list(&o.unreadable)
         );
+    }
+    if !o.read_only.is_empty() {
+        let r = REPLACE_ALL_READ_ONLY.trim_end_matches('.');
+        m += &format!("\n{r}: {}", list(&o.read_only));
     }
     for (p, e) in &o.errors {
         m += &format!("\nCannot write {}: {e}", file_name(p));
@@ -735,12 +737,15 @@ pub fn find_all_lines(doc: &Doc, o: &Opts, path: &Path) -> Result<Vec<Line>, Str
     Ok(lines)
 }
 
+#[derive(Default)]
 pub struct FifOut {
     pub lines: Vec<Line>,
     pub count: usize,
     pub changed: Vec<PathBuf>,
-    pub skipped: Vec<PathBuf>,
+    // Files open in a tab: Replace in Files replaces them in the tab on the main thread.
+    pub open: Vec<PathBuf>,
     pub unreadable: Vec<PathBuf>,
+    pub read_only: Vec<PathBuf>,
     pub errors: Vec<(PathBuf, String)>,
 }
 
@@ -751,89 +756,136 @@ pub struct FifArgs {
     pub hidden: bool,
     pub opts: Opts,
     pub replace: bool,
-    pub skip: Vec<PathBuf>,
-    // Encodings of open tabs by canonical path; other files use detection.
-    pub encs: Vec<(PathBuf, Enc)>,
+    // Text of the open tabs by canonical path; Find in Files searches it instead of the disk copy.
+    pub open: Vec<(PathBuf, Vec<u8>)>,
 }
 
 pub fn canonical(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-// Find in Files and Replace in Files; replace writes only files that change.
-pub fn find_in_files(a: &FifArgs) -> Result<FifOut, String> {
-    find_in_files_raw(a)
+fn read_text(f: &Path) -> Option<(Enc, Vec<u8>, bool)> {
+    let b = std::fs::read(f).ok()?;
+    if is_binary(&b) && !b.starts_with(b"\xFF\xFE") && !b.starts_with(b"\xFE\xFF") {
+        return None;
+    }
+    Some(encoding::load(&b))
 }
 
-fn find_in_files_raw(a: &FifArgs) -> Result<FifOut, String> {
+// Replaces in the disk copy of one file and writes it only if it changes.
+pub fn replace_file(f: &Path, o: &Opts, out: &mut FifOut) -> Result<(), String> {
+    let Some((enc, text, lost)) = read_text(f) else {
+        return Ok(());
+    };
+    let Some(doc) = Doc::new(&text) else {
+        return Ok(());
+    };
+    if lost {
+        out.unreadable.push(f.to_path_buf());
+        return Ok(());
+    }
+    let n = process(&doc, o, true, true, (0, doc.len()))?.len();
+    if n > 0 {
+        let bytes = encoding::encode(&doc.text(), enc, false)
+            .map_err(|n| format!("{n} characters cannot be saved in {}", encoding::name(enc)));
+        match bytes.and_then(|b| std::fs::write(f, b).map_err(|e| e.to_string())) {
+            Ok(()) => {
+                out.changed.push(canonical(f));
+                out.count += n;
+            }
+            Err(e) => out.errors.push((f.to_path_buf(), e)),
+        }
+    }
+    Ok(())
+}
+
+// Port of Notepad_plus::findInFilelist and replaceInFilelist: an open file uses its tab, not the disk copy.
+pub fn find_in_files(a: &FifArgs) -> Result<FifOut, String> {
     let files = walk(&a.dir, &patterns(&a.filters), a.sub, a.hidden);
+    let mut out = FifOut::default();
     let mut body = vec![];
-    let (mut count, mut nfiles) = (0, 0);
-    let (mut changed, mut skipped, mut unreadable, mut errors) = (vec![], vec![], vec![], vec![]);
+    let mut nfiles = 0;
     for f in &files {
         let c = canonical(f);
-        if a.replace && a.skip.contains(&c) {
-            skipped.push(f.clone());
-            continue;
-        }
-        let Ok(b) = std::fs::read(f) else { continue };
-        if is_binary(&b) && !b.starts_with(b"\xFF\xFE") && !b.starts_with(b"\xFE\xFF") {
-            continue;
-        }
-        let (enc, text, lost) = match a.encs.iter().find(|(p, _)| *p == c) {
-            Some(&(_, e)) => {
-                let (text, lost) = encoding::decode(&b, e);
-                (e, text, lost)
+        let tab = a.open.iter().find(|(p, _)| *p == c);
+        if a.replace {
+            match tab {
+                Some(_) => out.open.push(f.clone()),
+                None => replace_file(f, &a.opts, &mut out)?,
             }
-            None => encoding::load(&b),
+            continue;
+        }
+        let Some(text) = tab.map(|t| t.1.clone()).or_else(|| Some(read_text(f)?.1)) else {
+            continue;
         };
         let Some(doc) = Doc::new(&text) else { continue };
-        if a.replace {
-            if lost {
-                unreadable.push(f.clone());
-                continue;
-            }
-            let n = process(&doc, &a.opts, true, true, (0, doc.len()))?.len();
-            if n > 0 {
-                let out = encoding::encode(&doc.text(), enc, false).map_err(|n| {
-                    format!("{n} characters cannot be saved in {}", encoding::name(enc))
-                });
-                match out.and_then(|o| std::fs::write(f, o).map_err(|e| e.to_string())) {
-                    Ok(()) => {
-                        changed.push(c);
-                        count += n;
-                    }
-                    Err(e) => errors.push((f.clone(), e)),
-                }
-            }
-        } else {
-            let lines = find_all_lines(&doc, &a.opts, f)?;
-            if !lines.is_empty() {
-                count += lines
-                    .iter()
-                    .filter_map(|l| l.hit.as_ref())
-                    .map(|h| h.1.len())
-                    .sum::<usize>();
-                nfiles += 1;
-                body.extend(lines);
-            }
+        let lines = find_all_lines(&doc, &a.opts, f)?;
+        if !lines.is_empty() {
+            out.count += lines
+                .iter()
+                .filter_map(|l| l.hit.as_ref())
+                .map(|h| h.1.len())
+                .sum::<usize>();
+            nfiles += 1;
+            body.extend(lines);
         }
     }
-    let mut lines = vec![];
     if !a.replace {
-        lines.push(Line {
-            text: search_header(&a.opts, count, nfiles, files.len()).into_bytes(),
+        out.lines.push(Line {
+            text: search_header(&a.opts, out.count, nfiles, files.len()).into_bytes(),
             ..Default::default()
         });
-        lines.extend(body);
+        out.lines.extend(body);
     }
-    Ok(FifOut {
-        lines,
-        count,
-        changed,
-        skipped,
-        unreadable,
-        errors,
+    Ok(out)
+}
+
+// Runs Find in Files on a worker thread, so a large folder does not stop the UI; `done` runs on that thread.
+pub fn spawn_find_in_files(
+    a: FifArgs,
+    done: impl FnOnce(FifArgs, Result<FifOut, String>) + Send + 'static,
+) {
+    std::thread::spawn(move || {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| find_in_files(&a)))
+            .unwrap_or_else(|_| Err("Find in Files stopped because of an internal error.".into()));
+        done(a, r);
+    });
+}
+
+// Port of FindReplaceDlg::processReplace: the status message and the new selection.
+pub fn replace_once(
+    doc: &Doc,
+    o: &Opts,
+    cur: (isize, isize),
+) -> Result<(String, (isize, isize)), String> {
+    if doc.read_only() {
+        return Err(REPLACE_READ_ONLY.into());
+    }
+    let Some((m, _)) = find_next(doc, o, cur, false, Next::ForReplace)? else {
+        return Ok((replace_not_found_status(o), cur));
+    };
+    if m != cur {
+        return Ok((String::new(), m));
+    }
+    let n = doc.replace(m.0, m.1 - m.0, &o.replace_bytes(), o.regex());
+    if n < 0 {
+        return Err("Replace: Cannot replace text.".into());
+    }
+    let p = m.0 + n;
+    Ok(match find_next(doc, o, (p, p), false, Next::AfterReplace)? {
+        Some((next, w)) => (
+            match w {
+                Wrap::End => REPLACE_END_REACHED,
+                Wrap::Top => REPLACE_TOP_REACHED,
+                Wrap::No => "Replace: 1 occurrence was replaced. The next occurrence found.",
+            }
+            .to_string(),
+            next,
+        ),
+        None => (
+            "Replace: 1 occurrence was replaced. No more occurrences were found.".to_string(),
+            (p, p),
+        ),
     })
 }
 
@@ -999,8 +1051,7 @@ mod tests {
             hidden: false,
             opts: opts("foo"),
             replace: false,
-            skip: vec![],
-            encs: vec![],
+            open: vec![],
         };
         let out = find_in_files(&a).unwrap();
         let text: Vec<String> = out
@@ -1053,8 +1104,7 @@ mod tests {
                 ..opts("foo")
             },
             replace: true,
-            skip: vec![],
-            encs: vec![],
+            open: vec![],
         };
         let out = find_in_files(&a).unwrap();
         std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -1079,35 +1129,61 @@ mod tests {
     }
 
     #[test]
-    fn replace_in_files_skips_listed_files() {
-        let d = tmp("skip");
+    fn find_and_replace_in_files_use_the_open_tab() {
+        let d = tmp("open");
+        let tab = canonical(&d.join("sub/c.txt"));
         let a = FifArgs {
             dir: d.clone(),
             filters: "*.txt".into(),
             sub: true,
             hidden: false,
+            opts: opts("foo"),
+            replace: false,
+            open: vec![(tab.clone(), b"unsaved foo\n".to_vec())],
+        };
+        let out = find_in_files(&a).unwrap();
+        let text: Vec<String> = out
+            .lines
+            .iter()
+            .map(|l| String::from_utf8_lossy(&l.text).into_owned())
+            .collect();
+        let at = text
+            .iter()
+            .position(|t| t.ends_with("c.txt (1 hit)"))
+            .unwrap();
+        assert_eq!(text[at + 1], "\tLine 1: unsaved foo");
+        assert_eq!(out.count, 4 * 3 + 1);
+        let r = FifArgs {
+            replace: true,
             opts: Opts {
                 replace: "X".into(),
                 ..opts("foo")
             },
-            replace: true,
-            skip: vec![canonical(&d.join("sub/c.txt"))],
-            encs: vec![],
+            ..a
         };
-        let out = find_in_files(&a).unwrap();
-        assert_eq!(out.skipped, [d.join("sub/c.txt")]);
+        let out = find_in_files(&r).unwrap();
+        assert_eq!(out.open, [d.join("sub/c.txt")]);
+        assert_eq!(out.count, 4 * 3);
+        assert!(!out.changed.contains(&tab));
         assert_eq!(
             std::fs::read_to_string(d.join("sub/c.txt")).unwrap(),
             "foo bar\nbaz foo foo\n"
         );
+        let ro = FifOut {
+            read_only: vec![d.join("sub/c.txt")],
+            ..Default::default()
+        };
         assert_eq!(
-            std::fs::read_to_string(d.join("a.txt")).unwrap(),
+            replace_in_files_status(&ro, &[]),
+            "Replace in Files: 0 occurrences were replaced.\nReplace All: Cannot replace text. The current document is read only: c.txt"
+        );
+        let mut rest = FifOut::default();
+        replace_file(&d.join("sub/c.txt"), &r.opts, &mut rest).unwrap();
+        assert_eq!(rest.count, 3);
+        assert_eq!(
+            std::fs::read_to_string(d.join("sub/c.txt")).unwrap(),
             "X bar\nbaz X X\n"
         );
-        assert!(out.changed.contains(&canonical(&d.join("a.txt"))));
-        assert!(!out.changed.contains(&canonical(&d.join("sub/c.txt"))));
-        assert!(replace_in_files_status(&out, &[])
-            .ends_with("\nSkipped (unsaved changes in an open tab): c.txt"));
     }
 
     #[test]
@@ -1132,8 +1208,7 @@ mod tests {
                 ..opts("foo")
             },
             replace: true,
-            skip: vec![],
-            encs: vec![],
+            open: vec![],
         };
         let out = find_in_files(&a).unwrap();
         assert_eq!(
@@ -1152,26 +1227,6 @@ mod tests {
         assert_eq!(out.unreadable, [d.join("odd.txt")]);
         assert!(replace_in_files_status(&out, &[])
             .ends_with("\nSkipped (cannot read without loss in its encoding): odd.txt"));
-        std::fs::write(d.join("ansi.txt"), b"caf\xE9 foo\r\n").unwrap();
-        let tab = FifArgs {
-            filters: "ansi.txt".into(),
-            opts: Opts {
-                replace: "\u{439}".into(),
-                ..opts("foo")
-            },
-            encs: vec![(canonical(&d.join("ansi.txt")), Enc::Cp(1251))],
-            ..a
-        };
-        assert_eq!(find_in_files(&tab).unwrap().count, 1);
-        assert_eq!(
-            std::fs::read(d.join("ansi.txt")).unwrap(),
-            b"caf\xE9 \xE9\r\n"
-        );
-        let a = FifArgs {
-            filters: "*.txt".into(),
-            encs: vec![],
-            ..tab
-        };
         let find = FifArgs {
             replace: false,
             opts: opts("\u{e9}"),
@@ -1337,6 +1392,149 @@ mod tests {
         assert_eq!(
             find_next(&d, &nowrap, (8, 11), false, Next::Find).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn single_replace_selects_then_replaces() {
+        let d = Doc::new(b"foo foo").unwrap();
+        let o = Opts {
+            replace: "X".into(),
+            ..opts("foo")
+        };
+        assert_eq!(
+            replace_once(&d, &o, (0, 0)).unwrap(),
+            (String::new(), (0, 3))
+        );
+        assert_eq!(d.text(), b"foo foo");
+        assert_eq!(
+            replace_once(&d, &o, (0, 3)).unwrap(),
+            (
+                "Replace: 1 occurrence was replaced. The next occurrence found.".into(),
+                (2, 5)
+            )
+        );
+        assert_eq!(d.text(), b"X foo");
+        assert_eq!(
+            replace_once(&d, &o, (2, 5)).unwrap(),
+            (
+                "Replace: 1 occurrence was replaced. No more occurrences were found.".into(),
+                (3, 3)
+            )
+        );
+        assert_eq!(d.text(), b"X X");
+        assert_eq!(
+            replace_once(&d, &o, (3, 3)).unwrap(),
+            ("Replace: no occurrence was found in entire file".into(), (3, 3))
+        );
+        let d = Doc::new(b"foo a foo").unwrap();
+        assert_eq!(
+            replace_once(&d, &o, (6, 9)).unwrap(),
+            (REPLACE_END_REACHED.into(), (0, 3))
+        );
+        assert_eq!(d.text(), b"foo a X");
+        d.set_read_only(true);
+        assert_eq!(
+            replace_once(&d, &o, (0, 3)),
+            Err(REPLACE_READ_ONLY.to_string())
+        );
+        let nowrap = Opts { wrap: false, ..o };
+        let d = Doc::new(b"a foo").unwrap();
+        assert!(replace_once(&d, &nowrap, (5, 5))
+            .unwrap()
+            .0
+            .ends_with(NOT_FOUND_REASON));
+    }
+
+    #[test]
+    fn find_previous() {
+        let d = Doc::new(b"foo bar foo").unwrap();
+        let o = opts("foo");
+        assert_eq!(
+            find_next(&d, &o, (8, 11), true, Next::Find).unwrap(),
+            Some(((0, 3), Wrap::No))
+        );
+        assert_eq!(
+            find_next(&d, &o, (9, 9), true, Next::Find).unwrap(),
+            Some(((0, 3), Wrap::No))
+        );
+        let d2 = Doc::new(b"foo bar foo x").unwrap();
+        assert_eq!(
+            find_next(&d2, &o, (13, 13), true, Next::Find).unwrap(),
+            Some(((8, 11), Wrap::No))
+        );
+        let nowrap = Opts { wrap: false, ..o };
+        assert_eq!(
+            find_next(&d, &nowrap, (0, 3), true, Next::Find).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_regex_and_not_found_messages() {
+        let d = Doc::new(b"abc").unwrap();
+        let bad = Opts {
+            mode: Mode::Regex,
+            ..opts("a(")
+        };
+        let e = find_next(&d, &bad, (0, 0), false, Next::Find).unwrap_err();
+        assert!(e.starts_with("Find: Invalid Regular Expression\n"), "{e}");
+        assert!(e.len() > "Find: Invalid Regular Expression\n".len(), "{e}");
+        assert!(replace_once(&d, &bad, (0, 0)).is_err());
+        assert_eq!(not_found_status(&opts("zz")), "Find: Can't find the text \"zz\"");
+        let strict = Opts {
+            match_case: true,
+            ..opts("zz")
+        };
+        assert_eq!(
+            not_found_status(&strict),
+            format!("Find: Can't find the text \"zz\"\n{NOT_FOUND_REASON}")
+        );
+        let long = opts(&"x".repeat(40));
+        assert_eq!(
+            not_found_status(&long),
+            format!("Find: Can't find the text \"{}...\"", "x".repeat(28))
+        );
+    }
+
+    #[test]
+    fn large_folder_runs_on_a_worker_thread() {
+        let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/large");
+        let _ = std::fs::remove_dir_all(&d);
+        for i in 0..3000 {
+            let p = d.join(format!("d{}/f{i}.txt", i % 30));
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "a foo b\n").unwrap();
+        }
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let caller = std::thread::current().id();
+        spawn_find_in_files(
+            FifArgs {
+                dir: d,
+                filters: "*.txt".into(),
+                sub: true,
+                hidden: false,
+                opts: opts("foo"),
+                replace: false,
+                open: vec![],
+            },
+            move |_, r| {
+                let started = wait
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_ok();
+                tx.send((std::thread::current().id(), started, r)).unwrap();
+            },
+        );
+        go.send(()).unwrap();
+        let (worker, started, r) = rx.recv().unwrap();
+        assert_ne!(worker, caller);
+        assert!(started, "spawn_find_in_files returned only after the search");
+        let out = r.unwrap();
+        assert_eq!(out.count, 3000);
+        assert_eq!(
+            String::from_utf8_lossy(&out.lines[0].text),
+            "Search \"foo\" (3,000 hits in 3,000 files of 3,000 searched) [Normal]"
         );
     }
 }
