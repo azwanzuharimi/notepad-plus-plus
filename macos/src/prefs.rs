@@ -147,6 +147,7 @@ prefs! {
     tab_size: i64 = 4 => "TabSetting" "size",
     tab_replace: bool = false => "TabSetting" "replaceBySpace",
     backspace_unindent: bool = false => "TabSetting" "backspaceUnindent",
+    maintain_indent: String = "1".into() => "MaintainIndent" "",
     mark_all_case: bool = false => "MarkAll" "matchCase",
     mark_all_word: bool = true => "MarkAll" "wholeWordOnly",
     tags_match: bool = true => "TagsMatchHighLight" "",
@@ -353,6 +354,15 @@ impl Prefs {
             use_tab: self.autoc_tab,
             brief: self.autoc_brief,
             func_params: self.func_params,
+        }
+    }
+
+    // Parameters.cpp feedGUIParameters "MaintainIndent": autoIndent_none 0, autoIndent_advanced 1, autoIndent_basic 2.
+    pub fn auto_indent(&self) -> u8 {
+        match self.maintain_indent.trim() {
+            "no" | "0" => 0,
+            "2" => 2,
+            _ => 1,
         }
     }
 
@@ -1809,6 +1819,11 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
                     Bind::TabBackspace,
                 );
             });
+            b.group(c, "Auto-indent", 260., |b, g| {
+                b.radio(g, "None", Bind::Radio("MaintainIndent", "", "0"));
+                b.radio(g, "Basic", Bind::Radio("MaintainIndent", "", "2"));
+                b.radio(g, "Advanced", Bind::Radio("MaintainIndent", "", "1"));
+            });
         }),
         page(b, &|b, c, c2| {
             b.group(c, "Style All Occurrences of Token", 260., |b, g| {
@@ -2680,6 +2695,7 @@ mod tests {
             ("cdEnabledNew", "yes"),
             ("bak_none", "0"),
             ("SC_PRINT_COLOURONWHITE", "3"),
+            ("autoIndent_advanced", "1"),
         ];
         if let Some((_, x)) = named.iter().find(|(k, _)| *k == v) {
             return x.to_string();
@@ -2739,6 +2755,7 @@ mod tests {
             ("size", "_tabSize"),
             ("replaceBySpace", "_tabReplacedBySpace"),
             ("backspaceUnindent", "_backspaceUnindent"),
+            ("MaintainIndent", "_maintainIndent"),
             ("MarkAll.matchCase", "_markAllCaseSensitive"),
             ("MarkAll.wholeWordOnly", "_markAllWordOnly"),
             ("TagsMatchHighLight", "_enableTagsMatchHilite"),
