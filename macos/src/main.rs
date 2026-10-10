@@ -8,6 +8,7 @@ mod fileops;
 mod lang;
 mod language;
 mod macros;
+mod mark;
 mod panel;
 mod run;
 mod sci;
@@ -17,6 +18,7 @@ mod shortcuts;
 mod session;
 mod tools;
 mod view;
+mod window;
 
 use encoding::Enc;
 use objc2::rc::Retained;
@@ -26,7 +28,7 @@ use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControlStateValueOff,
-    NSControlStateValueOn, NSEvent, NSMenu, NSMenuItem, NSModalResponseOK,
+    NSControlStateValueOn, NSEvent, NSMenu, NSMenuDelegate, NSMenuItem, NSModalResponseOK,
     NSOpenPanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
     NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
@@ -195,6 +197,7 @@ define_class!(
             }
             if h.code == sci::SCN_UPDATEUI && h.id_from != sci::RESULTS_ID {
                 self.update_status();
+                self.schedule_smart_highlight();
             }
             if h.code == sci::SCN_DOUBLECLICK && h.id_from == sci::RESULTS_ID {
                 let v = &self.ivars().results.get().unwrap().0;
@@ -858,6 +861,102 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(showMark:))]
+        fn show_mark_action(&self, _s: Option<&AnyObject>) {
+            self.show_mark();
+        }
+
+        #[unsafe(method(markAll:))]
+        fn mark_all_action(&self, _s: Option<&AnyObject>) {
+            self.mark_all();
+        }
+
+        #[unsafe(method(clearAllMarks:))]
+        fn clear_all_marks_action(&self, _s: Option<&AnyObject>) {
+            self.clear_all_marks();
+        }
+
+        #[unsafe(method(copyMarkedText:))]
+        fn copy_marked_text(&self, _s: Option<&AnyObject>) {
+            self.mark_cmd(mark::COPY_FIND_MARK);
+        }
+
+        #[unsafe(method(markModeChanged:))]
+        fn mark_mode_changed_action(&self, _s: Option<&AnyObject>) {
+            self.mark_mode_changed();
+        }
+
+        #[unsafe(method(markCmd:))]
+        fn mark_cmd_action(&self, s: &NSMenuItem) {
+            self.mark_cmd(s.tag());
+        }
+
+        #[unsafe(method(smartHighlight:))]
+        fn smart_highlight_action(&self, _s: Option<&AnyObject>) {
+            self.smart_highlight();
+        }
+
+        #[unsafe(method(sortTabs:))]
+        fn sort_tabs_action(&self, s: &NSMenuItem) {
+            self.sort_tabs(s.tag() as usize);
+        }
+
+        #[unsafe(method(selectWindow:))]
+        fn select_window_action(&self, s: &NSMenuItem) {
+            self.select_window(s.tag() as usize);
+        }
+
+        #[unsafe(method(showWindows:))]
+        fn show_windows_action(&self, _s: Option<&AnyObject>) {
+            self.show_windows();
+        }
+
+        #[unsafe(method(windowsActivate:))]
+        fn windows_activate(&self, _s: Option<&AnyObject>) {
+            self.windows_cmd("activate");
+        }
+
+        #[unsafe(method(windowsSave:))]
+        fn windows_save(&self, _s: Option<&AnyObject>) {
+            self.windows_cmd("save");
+        }
+
+        #[unsafe(method(windowsClose:))]
+        fn windows_close(&self, _s: Option<&AnyObject>) {
+            self.windows_cmd("close");
+        }
+
+        #[unsafe(method(windowsSortTabs:))]
+        fn windows_sort_tabs(&self, _s: Option<&AnyObject>) {
+            self.windows_cmd("sort");
+        }
+
+        #[unsafe(method(windowsOk:))]
+        fn windows_ok(&self, _s: Option<&AnyObject>) {
+            self.windows_cmd("ok");
+        }
+
+        // The Window menu has no key equivalents, so AppKit does not fill it on each key press.
+        #[unsafe(method(menuHasKeyEquivalent:forEvent:target:action:))]
+        fn menu_has_key_equivalent(
+            &self,
+            _m: &NSMenu,
+            _e: &NSEvent,
+            _t: *mut *mut AnyObject,
+            _a: *mut c_void,
+        ) -> bool {
+            false
+        }
+    }
+
+    unsafe impl NSMenuDelegate for App {
+        #[unsafe(method(menuNeedsUpdate:))]
+        fn menu_needs_update(&self, m: &NSMenu) {
+            self.update_window_menu(m);
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -1330,6 +1429,7 @@ impl App {
         sci::setup_bookmark_margin(&view, cfg());
         sci::setup_change_history(&view, cfg());
         sci::setup_multi_selection(&view);
+        mark::setup_indicators(&view, cfg());
         let name = match &path {
             Some(p) => p
                 .file_name()
@@ -1364,6 +1464,9 @@ impl App {
     // Checkmarks for the current encoding and EOL; format commands are off while Replace in Files runs.
     fn validate(&self, item: &NSMenuItem) -> bool {
         if let Some(r) = self.validate_edit(item) {
+            return r;
+        }
+        if let Some(r) = self.validate_window(item) {
             return r;
         }
         let Some(action) = item.action() else {
@@ -1703,6 +1806,7 @@ fn main() {
     submenu(mtm, &bar, "Language", language::language_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
     macros::menus(mtm, &bar, t);
+    bar.addItem(&window::window_menu(mtm, &d));
     submenu(mtm, &bar, "?", tools::help_menu(mtm, t));
     if let Some(m) = bar.itemAtIndex(0).and_then(|i| i.submenu()) {
         m.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), 0);

@@ -425,12 +425,16 @@ impl App {
     pub(crate) fn move_tab(&self, tag: usize) {
         let n = self.ivars().tabs.borrow().len();
         let Some(cur) = self.current() else { return };
-        let Some(to) = move_target(tag, cur, n) else {
-            return;
-        };
+        if let Some(to) = move_target(tag, cur, n) {
+            self.move_tab_to(cur, to);
+        }
+    }
+
+    // Moves the tab at `from` to `to` and selects it.
+    pub(crate) fn move_tab_to(&self, from: usize, to: usize) {
         let t = {
             let mut tabs = self.ivars().tabs.borrow_mut();
-            let t = tabs.remove(cur);
+            let t = tabs.remove(from);
             tabs.insert(to, t.clone());
             t
         };

@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 18] = [
+const NOT_RECORDED: [&str; 30] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -64,6 +64,18 @@ const NOT_RECORDED: [&str; 18] = [
     "IDM_EDIT_MULTISELECTALLMATCHCASE",
     "IDM_EDIT_COLUMNMODE",
     "IDM_EDIT_COLUMNMODETIP",
+    "IDM_SEARCH_MARK",
+    "IDM_WINDOW_WINDOWS",
+    "IDM_WINDOW_SORT_FN_ASC",
+    "IDM_WINDOW_SORT_FN_DSC",
+    "IDM_WINDOW_SORT_FP_ASC",
+    "IDM_WINDOW_SORT_FP_DSC",
+    "IDM_WINDOW_SORT_FT_ASC",
+    "IDM_WINDOW_SORT_FT_DSC",
+    "IDM_WINDOW_SORT_FS_ASC",
+    "IDM_WINDOW_SORT_FS_DSC",
+    "IDM_WINDOW_SORT_FD_ASC",
+    "IDM_WINDOW_SORT_FD_DSC",
 ];
 
 struct Cmd {
@@ -258,6 +270,28 @@ fn menu_cmds() -> Vec<Cmd> {
             "selectTab:",
             n as isize,
         ));
+    }
+    v.push(("IDM_SEARCH_MARK".into(), 43054, "showMark:", -1));
+    for k in 0..5 {
+        let (n, t) = (k + 1, k as isize);
+        v.push((format!("IDM_SEARCH_MARKALLEXT{n}"), 43022 + 2 * k, "markCmd:", t));
+        v.push((format!("IDM_SEARCH_MARKONEEXT{n}"), 43062 + k, "markCmd:", 10 + t));
+        v.push((format!("IDM_SEARCH_UNMARKALLEXT{n}"), 43023 + 2 * k, "markCmd:", 20 + t));
+        v.push((format!("IDM_SEARCH_GOPREVMARKER{n}"), 43033 + k, "markCmd:", 30 + t));
+        v.push((format!("IDM_SEARCH_GONEXTMARKER{n}"), 43039 + k, "markCmd:", 40 + t));
+        v.push((format!("IDM_SEARCH_STYLE{n}TOCLIP"), 43055 + k, "markCmd:", 50 + t));
+    }
+    v.push(("IDM_SEARCH_CLEARALLMARKS".into(), 43032, "markCmd:", 25));
+    v.push(("IDM_SEARCH_GOPREVMARKER_DEF".into(), 43038, "markCmd:", 36));
+    v.push(("IDM_SEARCH_GONEXTMARKER_DEF".into(), 43044, "markCmd:", 46));
+    v.push(("IDM_SEARCH_ALLSTYLESTOCLIP".into(), 43060, "markCmd:", 55));
+    v.push(("IDM_SEARCH_MARKEDTOCLIP".into(), 43061, "markCmd:", 56));
+    v.push(("IDM_WINDOW_WINDOWS".into(), 11001, "showWindows:", -1));
+    for (k, n) in ["FN_ASC", "FN_DSC", "FP_ASC", "FP_DSC", "FT_ASC", "FT_DSC", "FS_ASC", "FS_DSC", "FD_ASC", "FD_DSC"]
+        .into_iter()
+        .enumerate()
+    {
+        v.push((format!("IDM_WINDOW_SORT_{n}"), 11002 + k as i32, "sortTabs:", k as isize));
     }
     v.into_iter()
         .map(|(name, id, action, tag)| Cmd {
@@ -1083,6 +1117,8 @@ mod tests {
             include_str!("search_extras.rs"),
             include_str!("language.rs"),
             include_str!("column.rs"),
+            include_str!("mark.rs"),
+            include_str!("window.rs"),
         ]
         .concat();
         let table = menu_cmds();
@@ -1142,6 +1178,14 @@ mod tests {
             (include_str!("edit.rs"), "(\"Lexicographically\", Sort::Lex),\n    (\"Lex. %s Ignoring Case\", Sort::LexIgnoreCase),\n    (\"As Integers\", Sort::Integer),\n    (\"As Decimals (Comma)\", Sort::DecimalComma),\n    (\"As Decimals (Dot)\", Sort::DecimalDot),"),
             (include_str!("edit.rs"), "Case::Upper),\n    (\"lowercase\", Case::Lower),\n    (\"Proper Case\", Case::ProperForce),\n    (\"Proper Case (blend)\", Case::ProperBlend),\n    (\"Sentence case\", Case::SentenceForce),\n    (\"Sentence case (blend)\", Case::SentenceBlend),\n    (\"iNVERT cASE\", Case::Invert),\n    (\"ranDOm CasE\", Case::Random),"),
             (include_str!("comment.rs"), "(\"Toggle Single Line Comment\", Cmd::Toggle),\n    (\"Single Line Comment\", Cmd::Comment),\n    (\"Single Line Uncomment\", Cmd::Uncomment),\n    (\"Block Comment\", Cmd::Stream),\n    (\"Block Uncomment\", Cmd::StreamUncomment),"),
+            (include_str!("mark.rs"), "STYLE_ALL: isize = 0;"),
+            (include_str!("mark.rs"), "STYLE_ONE: isize = 10;"),
+            (include_str!("mark.rs"), "CLEAR: isize = 20;"),
+            (include_str!("mark.rs"), "UP: isize = 30;"),
+            (include_str!("mark.rs"), "DOWN: isize = 40;"),
+            (include_str!("mark.rs"), "COPY: isize = 50;"),
+            (include_str!("mark.rs"), "ALL: isize = 5;"),
+            (include_str!("mark.rs"), "FIND_STYLE: isize = 6;"),
             (include_str!("edit.rs"), "SCI_CLEAR: u32 = 2180;"),
             (include_str!("edit.rs"), "SCI_LINEDUPLICATE: u32 = 2404;"),
             (include_str!("edit.rs"), "SCI_MOVESELECTEDLINESUP: u32 = 2620;"),

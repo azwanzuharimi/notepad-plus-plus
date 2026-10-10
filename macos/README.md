@@ -18,13 +18,22 @@ Not affiliated with the Notepad++ project.
 - The Column Editor settings are kept until the app quits, not saved. OK is not disabled when the text is empty; it does nothing. An invalid number shows an alert, not a balloon tip.
 - Not done: the Notepad++ Delete key fix for multiple carets at line ends, and the "column selection to multi-editing" key handling. There is no Character Panel or Clipboard History.
 
+2026-10-10 (Mark, token styles, Window menu):
+
+- Search > Mark... (Cmd+Shift+M, because Cmd+M minimizes on macOS) opens a Mark panel: Find what, Bookmark line, Purge for each search, Match whole word only, Match case, Wrap around, In selection, Search Mode, Mark All, Clear all marks, and Copy Marked Text. Marks use the "Find Mark Style" colour (indicator 31). There is no Backward direction option.
+- Search menu: Style All Occurrences of Token, Style One Token, Clear Style, Jump Up, Jump Down, and Copy Styled Text, with the "Mark Style 1" to "Mark Style 5" colours. Style All uses whole word and no match case, as in Notepad++. Jump Down is Ctrl+1..5 and Ctrl+0 as in Notepad++. Jump Up is Ctrl+Opt (not Ctrl+Shift), because AppKit does not match Shift with a digit.
+- Smart highlighting is on, as in Notepad++: when a whole word is selected, its other occurrences in the visible lines get the "Smart Highlighting" colour (whole word, no match case). It runs 50 ms after the last screen update. There is no Highlight matching tags for XML and HTML.
+- Window menu: Sort By (10 orders), Windows..., and the open documents (up to 40, as in Notepad++) with a check on the active tab. The Windows dialog has the Name, Path, Type, Size, and Modified time columns. A click on a column header sorts the list, and a second click reverses it. Activate, Save, Close window(s), Sort tabs, and OK work as in Notepad++. Sort tabs without a column click sorts by name first. Cancel in Close window(s) keeps that document and goes on with the next one.
+- A macro records the style token commands, as in Notepad++. It does not record Mark..., Sort By, or Windows....
+- Type is the language name from the file extension. Modified time is the time of the file on disk.
+
 2026-10-10 (Search menu):
 
 - Search menu in the Notepad++ order: Select and Find Next/Previous, Find (Volatile) Next/Previous, Search Results Window, Next/Previous Search Result, Go to Matching Brace, Select All In-between {} [] or (), Change History, and Bookmark.
 - Shortcuts use Cmd for Ctrl (for example Cmd+F2 toggles a bookmark, Cmd+B goes to the matching brace). F2, F3, F4, and F7 are as in Notepad++.
 - Bookmarks use the Notepad++ icon in margin 1. A click in that margin toggles a bookmark. The Bookmark submenu has all ten Notepad++ commands. Each line edit is one undo action. Read-only tabs do not change.
 - Change history markers show in margin 2 by default, as in Notepad++. Clear Change History also clears the undo history, as in Notepad++. A modified tab stays modified.
-- No Incremental Search, Mark, token styles, or Find characters in range yet.
+- No Incremental Search or Find characters in range yet.
 
 2026-10-10:
 
