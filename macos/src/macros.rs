@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 42] = [
+const NOT_RECORDED: [&str; 44] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -88,6 +88,8 @@ const NOT_RECORDED: [&str; 42] = [
     "IDM_EDIT_PASTE_BINARY",
     "IDM_VIEW_DOCLIST",
     "IDM_VIEW_FUNC_LIST",
+    "IDM_LANGSTYLE_CONFIG_DLG",
+    "IDM_SETTING_IMPORTSTYLETHEMES",
 ];
 
 struct Cmd {
@@ -218,6 +220,8 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_FORMAT_TODOS", 45001, "eolConvert:", 0),
         ("IDM_FORMAT_TOUNIX", 45002, "eolConvert:", 2),
         ("IDM_FORMAT_TOMAC", 45003, "eolConvert:", 1),
+        ("IDM_LANGSTYLE_CONFIG_DLG", 46001, "styleConfigurator:", -1),
+        ("IDM_SETTING_IMPORTSTYLETHEMES", 48006, "importStyleThemes:", -1),
     ]
     .into_iter()
     .map(|(n, i, a, t)| (n.to_string(), i, a, t))
@@ -1145,6 +1149,7 @@ mod tests {
             include_str!("window.rs"),
             include_str!("autoc.rs"),
             include_str!("binary.rs"),
+            include_str!("style_dlg.rs"),
         ]
         .concat();
         let table = menu_cmds();

@@ -136,7 +136,7 @@ impl App {
         if let Some(t) = self.tab(i) {
             let l = tab_language(&t);
             sci::apply_language(&t.view, cfg(), l);
-            self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()));
+            self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()), cfg());
         }
         self.function_list_reload();
     }

@@ -8,6 +8,16 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Style Configurator, themes):
+
+- Settings > Style Configurator...: Select theme, Language (Global Styles first), Style, Foreground and Background colour, Font name (the macOS fonts), Font size, Bold, Italic, Underline, Default ext. and User ext., Default and User-defined keywords, and the 7 Global override check boxes. Changes show at once in all open editors. Cancel and the close button go back to the styles from before. There is no Apply button and no Transparency, as in Notepad++. There is no "Go to settings" link.
+- The 22 Notepad++ themes are in the app. User themes are `.xml` files in `themes/` in the settings folder; a user theme replaces an installed theme with the same name. Settings > Import > Import style theme(s)... copies files into that folder.
+- Save & Close writes the styles to the file of the theme: `stylers.xml` for "Default (stylers.xml)", else the theme file. Changes to an installed theme go to a copy in `themes/`, as in Notepad++. A file that exists but does not load is not replaced. When `stylers.xml` does not exist, the app uses `stylers.model.xml`.
+- A theme that is older than `stylers.model.xml` gets the missing styles from the model, with the Default Style colours, as in Notepad++.
+- The theme choice is in `config.xml`, in `<GUIConfig name="DarkMode" lightThemeName="..." darkThemeName="..." />`, as in Notepad++ 8.x. The Global override check boxes are in `<GUIConfig name="globalOverride" ... />`.
+- Dark mode: macOS has no Notepad++ dark mode switch. When the macOS appearance is dark at start, the app uses `darkThemeName`; its default is DarkModeDefault, as in Notepad++ with dark mode on. A theme that you select in dark appearance is stored in `darkThemeName`, so your choice wins. A change of the macOS appearance shows after a restart.
+- User ext. comes before the language extensions.
+- Not done: the "colorStyle" transparency attribute; `addDefaultStyles` (the app has its own fallback colours).
 2026-10-10 (panels):
 
 - View > Document List and View > Function List show docked panels with a title and a close button. A checkmark shows an open panel.

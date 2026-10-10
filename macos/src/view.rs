@@ -364,9 +364,9 @@ impl App {
     }
 
     // Applies the global View options to one editor.
-    pub(crate) fn apply_view(&self, v: &NSView, lang: &str) {
+    pub(crate) fn apply_view(&self, v: &NSView, lang: &str, c: &crate::config::Config) {
         let o = self.view_opts();
-        sci::setup_symbols(v, cfg(), o.on[WS], o.on[EOL], o.on[NPC], o.on[CC]);
+        sci::setup_symbols(v, c, o.on[WS], o.on[EOL], o.on[NPC], o.on[CC]);
         sci::setup_indent_guides(v, python_style_indent(lang), o.on[GUIDES]);
         sci::setup_wrap(v, o.on[WRAP], o.on[WRAP_SYMBOL]);
         sci::set_zoom(v, o.zoom);
@@ -375,7 +375,7 @@ impl App {
     fn apply_view_all(&self) {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
         tabs.iter()
-            .for_each(|t| self.apply_view(&t.view, lang_of(t)));
+            .for_each(|t| self.apply_view(&t.view, lang_of(t), cfg()));
     }
 
     pub(crate) fn view_option(&self, tag: usize) {
