@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use crate::backup::{self, Restore};
 use crate::config::Config;
 use crate::config::{app_support_dir, attr};
 use crate::encoding::{self, Enc};
@@ -54,6 +55,8 @@ pub struct FileInfo {
     pub lang: String,
     pub encoding: i64,
     pub read_only: bool,
+    pub backup_file_path: String,
+    pub original_timestamp: u64,
 }
 
 // The files of mainView then subView; `active` is an index in `files`.
@@ -65,6 +68,11 @@ pub struct Session {
 
 fn num(e: &BytesStart, key: &str, default: i64) -> i64 {
     attr(e, key).trim().parse().unwrap_or(default)
+}
+
+// A FILETIME half, as NppXml::uint64Attribute then DWORD.
+fn dword(e: &BytesStart, key: &str) -> u64 {
+    attr(e, key).trim().parse::<u64>().unwrap_or(0) & 0xFFFF_FFFF
 }
 
 // Parameters.cpp getSessionFromXmlTree; None when the root is not NotepadPlus/Session.
@@ -107,6 +115,9 @@ pub fn parse_session(xml: &str) -> Option<Session> {
                         lang: attr(&e, "lang"),
                         encoding: num(&e, "encoding", -1),
                         read_only: attr(&e, "userReadOnly") == "yes",
+                        backup_file_path: attr(&e, "backupFilePath"),
+                        original_timestamp: dword(&e, "originalFileLastModifTimestamp")
+                            | dword(&e, "originalFileLastModifTimestampHigh") << 32,
                     });
                 }
             }
@@ -142,7 +153,7 @@ pub fn write_session(s: &Session) -> String {
     out += &format!("        <mainView activeIndex=\"{}\">\r\n", s.active);
     for f in &s.files {
         out += &format!(
-            "            <File firstVisibleLine=\"{}\" xOffset=\"{}\" startPos=\"{}\" endPos=\"{}\" selMode=\"{}\" lang=\"{}\" encoding=\"{}\" userReadOnly=\"{}\" filename=\"{}\" />\r\n",
+            "            <File firstVisibleLine=\"{}\" xOffset=\"{}\" startPos=\"{}\" endPos=\"{}\" selMode=\"{}\" lang=\"{}\" encoding=\"{}\" userReadOnly=\"{}\" filename=\"{}\" backupFilePath=\"{}\" originalFileLastModifTimestamp=\"{}\" originalFileLastModifTimestampHigh=\"{}\" />\r\n",
             f.first_visible_line,
             f.x_offset,
             f.start_pos,
@@ -152,6 +163,9 @@ pub fn write_session(s: &Session) -> String {
             f.encoding,
             yes_no(f.read_only),
             escape(f.filename.as_str()),
+            escape(f.backup_file_path.as_str()),
+            f.original_timestamp & 0xFFFF_FFFF,
+            f.original_timestamp >> 32,
         );
     }
     out + "        </mainView>\r\n        <subView activeIndex=\"0\" />\r\n    </Session>\r\n</NotepadPlus>\r\n"
@@ -380,6 +394,11 @@ fn load_recent() -> Recent {
     r
 }
 
+// Started with -nosession, or session.xml cannot be read and is kept as it is.
+pub fn no_session() -> bool {
+    S.with(|s| s.no_session.get())
+}
+
 // The list loads from config.xml at the first use, also when a file opens before the launch ends.
 fn with_recent<R>(f: impl FnOnce(&mut Recent) -> R) -> R {
     S.with(|s| f(s.recent.borrow_mut().get_or_insert_with(load_recent)))
@@ -479,13 +498,36 @@ impl App {
         let p = crate::prefs::get();
         let no_session = std::env::args_os().any(|a| a == "-nosession") || !p.remember_session;
         S.with(|s| s.no_session.set(no_session));
-        let session = app_support_dir()
+        let path = app_support_dir()
             .filter(|_| !no_session)
-            .and_then(|d| read_session(&d.join("session.xml")));
+            .map(|d| d.join("session.xml"));
+        let session = path.as_deref().and_then(read_session);
+        if let (None, Some(p)) = (&session, path.filter(|p| p.exists())) {
+            self.keep_unreadable_session(&p);
+        }
         if let Some(s) = session {
             let opened = self.tab_view().selectedTabViewItem();
-            self.load_session(&s);
-            if let Some(item) = opened {
+            let tabs = self.ivars().tabs.borrow().clone();
+            let blank: Vec<_> = tabs
+                .iter()
+                .filter(|t| t.path.is_none() && !self.dirty(t) && sci::length(&t.view) == 0)
+                .map(|t| t.item.clone())
+                .collect();
+            self.load_session(&s, backup::snapshot_on());
+            if self.ivars().tabs.borrow().len() > tabs.len() {
+                self.drop_tabs(&blank);
+            }
+            let top = self
+                .ivars()
+                .tabs
+                .borrow()
+                .iter()
+                .filter(|t| t.path.is_none())
+                .filter_map(|t| backup::untitled_number(&t.name))
+                .max();
+            let n = &self.ivars().untitled;
+            n.set(n.get().max(top.unwrap_or(0)));
+            if let Some(item) = opened.filter(|o| !blank.contains(o)) {
                 self.tab_view().selectTabViewItem(Some(&item));
             }
             // Notepad_plus_Window.cpp: addNewDocumentOnStartup opens a new document after the session.
@@ -493,6 +535,19 @@ impl App {
                 self.add_tab(None, Enc::Utf8, b"", false);
             }
         }
+        self.start_backups();
+    }
+
+    // An unreadable session.xml moves to session.xml.unreadable; if it cannot move, no session is written.
+    fn keep_unreadable_session(&self, p: &Path) {
+        let to = PathBuf::from(format!("{}.unreadable", p.display()));
+        let info = if !to.exists() && std::fs::rename(p, &to).is_ok() {
+            format!("The file is kept as {}.", to.display())
+        } else {
+            S.with(|s| s.no_session.set(true));
+            "The session is not saved when the app quits.".to_string()
+        };
+        self.alert(&format!("Cannot read {}", p.display()), &info, &["OK"]);
     }
 
     // Quit: write session.xml (when RememberLastSession is on), then the History and the settings of config.xml.
@@ -514,22 +569,25 @@ impl App {
         }
     }
 
-    // Notepad_plus.cpp getCurrentOpenedFiles: the tabs that have a file, with their positions.
+    // Notepad_plus.cpp getCurrentOpenedFiles: the tabs with their positions; untitled tabs with text unless `only_existing`.
     pub(crate) fn current_session(&self, only_existing: bool) -> Session {
         let tabs = self.ivars().tabs.borrow().clone();
         let cur = self.current();
         let mut s = Session::default();
         for (i, t) in tabs.iter().enumerate() {
-            let Some(p) = t.path.as_deref().filter(|p| !only_existing || p.exists()) else {
-                continue;
+            let filename = match t.path.as_deref() {
+                Some(p) if !only_existing || p.exists() => p.to_string_lossy().into_owned(),
+                None if !only_existing && sci::length(&t.view) > 0 => t.name.clone(),
+                _ => continue,
             };
             if Some(i) == cur {
                 s.active = s.files.len();
             }
             let v = &t.view;
             let get = |m| sci::send(v, m, 0, 0);
+            let b = backup::entry(v);
             s.files.push(FileInfo {
-                filename: p.to_string_lossy().into_owned(),
+                filename,
                 first_visible_line: sci::send(
                     v,
                     SCI_DOCLINEFROMVISIBLE,
@@ -551,36 +609,41 @@ impl App {
                     _ => -1,
                 },
                 read_only: t.ro,
+                backup_file_path: b
+                    .as_ref()
+                    .map_or(String::new(), |b| b.path.to_string_lossy().into_owned()),
+                original_timestamp: if b.is_some() { backup::stamp_of(v) } else { 0 },
             });
         }
         s
     }
 
-    // NppIO.cpp loadSession: missing files are skipped; a character set is used again if the file has no BOM.
-    pub(crate) fn load_session(&self, s: &Session) {
+    // NppIO.cpp loadSession: missing files are skipped; in snapshot mode a backup opens as a modified tab.
+    pub(crate) fn load_session(&self, s: &Session, snapshot: bool) {
         let mut active: Option<Retained<NSTabViewItem>> = None;
+        let mut changed = vec![];
         for (k, f) in s.files.iter().enumerate() {
             let p = PathBuf::from(&f.filename);
-            if !p.is_file() {
-                continue;
-            }
-            let was_open = self.find_open(&p, None).is_some();
-            self.open_path(&p);
-            let Some(i) = self.find_open(&p, None) else {
-                continue;
-            };
-            let enc = u32::try_from(f.encoding)
-                .ok()
-                .filter(|&cp| encoding::supported(cp))
-                .map(Enc::Cp);
-            if let (Some(e), false) = (enc, was_open) {
-                if let Some(b) = std::fs::read(&p)
-                    .ok()
-                    .filter(|b| encoding::bom(b).is_none())
-                {
-                    self.load_into(i, &b, e);
+            let bak = snapshot.then(|| self.stored_backup(f)).flatten();
+            let from_file = |this: &Self| this.open_session_file(&p, f);
+            let r = backup::restore(backup::mtime(&p), bak.is_some(), f.original_timestamp);
+            let i = match r {
+                Restore::Skip => None,
+                Restore::File => from_file(self),
+                Restore::Backup { changed: c } => {
+                    match bak.and_then(|b| self.restore_backup(f, &p, &b)) {
+                        Some(i) => {
+                            if c {
+                                changed.extend(self.tab(i).map(|t| t.item));
+                            }
+                            Some(i)
+                        }
+                        None if p.is_file() => from_file(self),
+                        None => None,
+                    }
                 }
-            }
+            };
+            let Some(i) = i else { continue };
             let detected = self
                 .tab(i)
                 .and_then(|t| language::tab_language(&t))
@@ -606,9 +669,29 @@ impl App {
                 }
             }
         }
+        for item in &changed {
+            self.ask_reload_restored(item);
+        }
         if let Some(item) = active {
             self.tab_view().selectTabViewItem(Some(&item));
         }
+    }
+
+    // A character set is used again if the file has no BOM.
+    fn open_session_file(&self, p: &Path, f: &FileInfo) -> Option<usize> {
+        let was_open = self.find_open(p, None).is_some();
+        self.open_path(p);
+        let i = self.find_open(p, None)?;
+        let enc = u32::try_from(f.encoding)
+            .ok()
+            .filter(|&cp| encoding::supported(cp))
+            .map(Enc::Cp);
+        if let (Some(e), false) = (enc, was_open) {
+            if let Some(b) = std::fs::read(p).ok().filter(|b| encoding::bom(b).is_none()) {
+                self.load_into(i, &b, e);
+            }
+        }
+        Some(i)
     }
 
     pub(crate) fn load_session_file(&self) {
@@ -624,7 +707,7 @@ impl App {
             .ok()
             .and_then(|x| parse_session(&x))
         {
-            Some(s) => self.load_session(&s),
+            Some(s) => self.load_session(&s, false),
             None => {
                 self.alert(
                     "Could not Load Session",
@@ -850,7 +933,40 @@ mod tests {
             lang: String::new(),
             encoding: -1,
             read_only: false,
+            backup_file_path: String::new(),
+            original_timestamp: 0,
         }
+    }
+
+    #[test]
+    fn session_backup_attributes() {
+        let s = Session {
+            active: 1,
+            files: vec![
+                FileInfo {
+                    backup_file_path: "/u/backup/a.txt@2026-10-10_134501".into(),
+                    original_timestamp: 0x01DC_3A2B_9F8E_7D6C,
+                    ..info("/w/a.txt")
+                },
+                FileInfo {
+                    backup_file_path: "/u/backup/new 1@2026-10-10_134507".into(),
+                    ..info("new 1")
+                },
+            ],
+        };
+        let x = write_session(&s);
+        assert!(x.contains("filename=\"/w/a.txt\" backupFilePath=\"/u/backup/a.txt@2026-10-10_134501\" originalFileLastModifTimestamp=\"2676915564\" originalFileLastModifTimestampHigh=\"31210027\""));
+        assert!(x.contains("filename=\"new 1\" backupFilePath=\"/u/backup/new 1@2026-10-10_134507\" originalFileLastModifTimestamp=\"0\" originalFileLastModifTimestampHigh=\"0\""));
+        assert_eq!(parse_session(&x), Some(s));
+        let win = r#"<NotepadPlus><Session activeView="0"><mainView activeIndex="0">
+            <File filename="new 2" backupFilePath="C:\Users\me\AppData\Roaming\Notepad++\backup\new 2@2024-01-02_030405" originalFileLastModifTimestamp="4294967295" originalFileLastModifTimestampHigh="4294967296" />
+            </mainView></Session></NotepadPlus>"#;
+        let f = &parse_session(win).unwrap().files[0];
+        assert_eq!(f.filename, "new 2");
+        assert!(f
+            .backup_file_path
+            .ends_with("backup\\new 2@2024-01-02_030405"));
+        assert_eq!(f.original_timestamp, 0xFFFF_FFFF);
     }
 
     #[test]

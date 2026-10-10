@@ -7,7 +7,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBackingStoreType, NSButton, NSControl, NSControlTextEditingDelegate, NSFont, NSMenuItem,
+    NSBackingStoreType, NSButton, NSControl, NSControlTextEditingDelegate, NSFont, NSLineBreakMode,
+    NSMenuItem,
     NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSScrollView, NSSlider, NSTabView,
     NSTabViewItem, NSTabViewType, NSTableColumn, NSTableView, NSTableViewDataSource,
     NSTableViewDelegate, NSTextField, NSView, NSWindow, NSWindowStyleMask,
@@ -160,6 +161,11 @@ prefs! {
     fill_find_caret: bool = true => "Searching" "fillFindFieldSelectCaret",
     fill_find_max: i64 = 1024 => "Searching" "fillFindWhatThreshold",
     remember_session: bool = true => "RememberLastSession" "",
+    snapshot_mode: bool = true => "Backup" "isSnapshotMode",
+    snapshot_timing: i64 = 7000 => "Backup" "snapshotBackupTiming",
+    backup_action: i64 = 0 => "Backup" "action",
+    backup_use_dir: bool = false => "Backup" "useCustumDir",
+    backup_dir: String = String::new() => "Backup" "dir",
     autoc_action: i64 = 3 => "auto-completion" "autoCAction",
     autoc_from: i64 = 1 => "auto-completion" "triggerFromNbChar",
     autoc_ignore_numbers: bool = true => "auto-completion" "autoCIgnoreNumbers",
@@ -749,6 +755,13 @@ pub fn with<R>(f: impl FnOnce(&Prefs) -> R) -> R {
     })
 }
 
+// A copy of the settings when they are loaded and not borrowed; for the panic hook.
+pub fn try_get() -> Option<Prefs> {
+    S.try_with(|s| s.try_borrow().ok()?.prefs.clone())
+        .ok()
+        .flatten()
+}
+
 // A copy of the settings.
 pub fn get() -> Prefs {
     with(Prefs::clone)
@@ -1059,7 +1072,7 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 13] = [
+pub const PAGES: [&str; 14] = [
     "Editing 1",
     "Editing 2",
     "Margins/Border/Edge",
@@ -1069,6 +1082,7 @@ pub const PAGES: [&str; 13] = [
     "Indentation",
     "Highlighting",
     "Searching",
+    "Backup",
     "Auto-Completion",
     "Cloud & Link",
     "Search Engine",
@@ -1179,6 +1193,8 @@ enum Bind {
     TabSpace(bool),
     TabBackspace,
     Browse,
+    SnapshotSecs,
+    BackupBrowse,
 }
 
 struct Ctl {
@@ -1697,6 +1713,50 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
                 );
             });
         }),
+        page(b, &|b, c, _| {
+            b.group(c, "Session snapshot and periodic backup", 520., |b, g| {
+                b.check(
+                    g,
+                    "Remember current session for next launch",
+                    Bind::Check("RememberLastSession", ""),
+                );
+                b.check(
+                    g,
+                    "Enable session snapshot and periodic backup",
+                    Bind::Check("Backup", "isSnapshotMode"),
+                );
+                b.label_at(g, "Trigger backup on modification in every", 14., 260.);
+                b.field_at(g, 278., 40., Bind::SnapshotSecs);
+                b.label_at(g, "seconds", 324., 80.);
+                g.y += 28.;
+                let path = app_support_dir().map(|d| d.join("backup/"));
+                b.label_at(g, "Backup path:", 14., 90.);
+                let l = b.label_at(
+                    g,
+                    &path.map_or(String::new(), |p| p.display().to_string()),
+                    108.,
+                    400.,
+                );
+                l.setLineBreakMode(NSLineBreakMode::ByTruncatingMiddle);
+                l.setToolTip(Some(&l.stringValue()));
+                g.y += 26.;
+            });
+            b.group(c, "Backup on save", 520., |b, g| {
+                b.radio(g, "None", Bind::Radio("Backup", "action", "0"));
+                b.radio(g, "Simple backup", Bind::Radio("Backup", "action", "1"));
+                b.radio(g, "Verbose backup", Bind::Radio("Backup", "action", "2"));
+                g.y += 6.;
+                b.check(
+                    g,
+                    "Custom Backup Directory",
+                    Bind::Check("Backup", "useCustumDir"),
+                );
+                b.label_at(g, "Directory:", 14., 70.);
+                b.field_at(g, 88., 340., Bind::Text("Backup", "dir"));
+                b.button_at(g, 434., 50., "...", Bind::BackupBrowse, sel!(prefChanged:));
+                g.y += 30.;
+            });
+        }),
         page(b, &|b, c, c2| {
             let ac = "auto-completion";
             b.group(c, "Auto-Completion", 290., |b, g| {
@@ -1889,6 +1949,8 @@ fn refresh(app: &App) {
                         ("NewDocDefaultSettings", "openAnsiAsUTF8") => {
                             p.new_encoding == 4 && p.new_codepage == -1
                         }
+                        ("Backup", "isSnapshotMode") => p.remember_session,
+                        ("Backup", "useCustumDir") => p.backup_action != 0,
                         _ => true,
                     };
                 }
@@ -1908,6 +1970,7 @@ fn refresh(app: &App) {
                         "openSaveDir" => p.open_save_dir == 2,
                         "uriCustomizedSchemes" => p.url_style != 0,
                         "searchEngine" => p.search_engine == 0,
+                        "Backup" => p.backup_action != 0 && p.backup_use_dir,
                         _ => true,
                     };
                 }
@@ -1987,6 +2050,11 @@ fn refresh(app: &App) {
                     enabled = lang.as_ref().is_none_or(|l| !lang_default(l.1));
                 }
                 Bind::Browse => enabled = p.open_save_dir == 2,
+                Bind::SnapshotSecs => {
+                    set_text(c, &(p.snapshot_timing / 1000).to_string());
+                    enabled = p.snapshot_mode;
+                }
+                Bind::BackupBrowse => enabled = p.backup_action != 0 && p.backup_use_dir,
             }
             c.setEnabled(enabled);
             if let Some(e) = &k.echo {
@@ -2103,6 +2171,7 @@ impl App {
 
     pub(crate) fn apply_prefs(&self) {
         self.apply_view_all();
+        self.backup_settings_changed();
     }
 
     pub(crate) fn pref_changed(&self, c: &NSControl) {
@@ -2132,6 +2201,10 @@ impl App {
                     on(c).put()
                 };
                 update(|x| x.set(g, a, &v));
+                // BackupSubDlg: without the session there is no snapshot mode.
+                if g == "RememberLastSession" && !on(c) {
+                    update(|x| x.snapshot_mode = false);
+                }
             }
             Bind::Bit(g, a, bit) => {
                 let old = p.get(g, a).trim().parse::<i64>().unwrap_or(0);
@@ -2263,6 +2336,24 @@ impl App {
                 }),
             },
             Bind::Browse => {}
+            Bind::SnapshotSecs => {
+                if let Some(n) = int {
+                    update(|x| x.snapshot_timing = n.clamp(1, 1_000_000) * 1000);
+                }
+            }
+            Bind::BackupBrowse => {
+                let o = NSOpenPanel::openPanel(self.mtm());
+                o.setCanChooseDirectories(true);
+                o.setCanChooseFiles(false);
+                o.setMessage(Some(&ns("Select a folder as backup directory")));
+                if o.runModal() != NSModalResponseOK {
+                    return;
+                }
+                let Some(path) = o.URL().and_then(|u| u.path()) else {
+                    return;
+                };
+                update(|x| x.backup_dir = path.to_string());
+            }
         }
         if let Some((name, info, bs)) = lang_write {
             if let Err(e) = set_lang_tab(&name, info, bs) {
@@ -2351,6 +2442,7 @@ mod tests {
             ("urlUnderLineFg", "2"),
             ("se_google", "2"),
             ("cdEnabledNew", "yes"),
+            ("bak_none", "0"),
         ];
         if let Some((_, x)) = named.iter().find(|(k, _)| *k == v) {
             return x.to_string();
@@ -2424,6 +2516,10 @@ mod tests {
             ("fillFindFieldSelectCaret", "_fillFindFieldSelectCaret"),
             ("fillFindWhatThreshold", "_fillFindWhatThreshold"),
             ("RememberLastSession", "_rememberLastSession"),
+            ("isSnapshotMode", "_isSnapshotMode"),
+            ("snapshotBackupTiming", "_snapshotBackupTiming"),
+            ("action", "_backup"),
+            ("useCustumDir", "_useDir"),
             ("autoCAction", "_autocStatus"),
             ("triggerFromNbChar", "_autocFromLen"),
             ("autoCIgnoreNumbers", "_autocIgnoreNumbers"),
@@ -2447,6 +2543,7 @@ mod tests {
             "defaultDirPath",
             "lastUsedDirPath",
             "searchEngineCustom",
+            "dir",
         ];
         let p = Prefs::default();
         for (g, a) in Prefs::KEYS {

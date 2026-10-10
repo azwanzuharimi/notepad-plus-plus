@@ -207,6 +207,7 @@ impl App {
     pub(crate) fn drop_tabs(&self, items: &[Retained<NSTabViewItem>]) {
         for item in items {
             self.recent_closed(item);
+            self.backup_closed(item);
             self.ivars()
                 .tabs
                 .borrow_mut()
