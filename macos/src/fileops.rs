@@ -234,6 +234,9 @@ impl App {
         self.keep_active(active);
         self.layout_views();
         if self.ivars().tabs.borrow().is_empty() {
+            if items.len() == 1 && crate::prefs::get().tab_quit_on_empty {
+                objc2_app_kit::NSApplication::sharedApplication(self.mtm()).terminate(None);
+            }
             self.ivars().untitled.set(0);
             self.add_tab(None, crate::Enc::Utf8, b"", false);
         }

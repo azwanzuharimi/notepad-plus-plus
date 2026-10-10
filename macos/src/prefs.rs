@@ -191,6 +191,7 @@ prefs! {
     tab_top_bar: bool = true => "TabBar" "drawTopBar",
     tab_close: bool = true => "TabBar" "closeButton",
     tab_pin: bool = true => "TabBar" "pinButton",
+    tab_quit_on_empty: bool = false => "TabBar" "quitOnEmpty",
 }
 
 // NppGUI::AutocStatus.
@@ -1413,6 +1414,7 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
             c.y += 10.;
             b.check(c, "Lock (no drag and drop)", Bind::Inverse(t, "dragAndDrop"));
             b.check(c, "Double click to close document", Bind::Check(t, "doubleClick2Close"));
+            b.check(c, "Exit on close the last tab", Bind::Check(t, "quitOnEmpty"));
             b.check(c2, "Change inactive tab color", Bind::Check(t, "drawInactiveTab"));
             b.check(c2, "Draw a coloured bar on active tab", Bind::Check(t, "drawTopBar"));
             c2.y += 10.;
