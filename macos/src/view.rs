@@ -5,10 +5,12 @@ use objc2::runtime::{AnyObject, Sel};
 use objc2::{sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags,
-    NSFloatingWindowLevel, NSMenuItem, NSNormalWindowLevel, NSView, NSWindow,
+    NSFloatingWindowLevel, NSMenuItem, NSNormalWindowLevel, NSView, NSWindow, NSWorkspace,
+    NSWorkspaceOpenConfiguration,
 };
 use objc2_foundation::{
-    NSDate, NSDateFormatter, NSDateFormatterStyle, NSDictionary, NSNumber, NSUserDefaults,
+    NSArray, NSDate, NSDateFormatter, NSDateFormatterStyle, NSDictionary, NSNumber, NSURL,
+    NSUserDefaults,
 };
 use std::path::Path;
 use std::sync::OnceLock;
@@ -357,7 +359,47 @@ fn style_all(v: &NSView) {
     }
 }
 
+// Notepad_plus.rc View Current File in: Firefox, Chrome, Edge; the menu tag is the index.
+const BROWSERS: [(&str, &str); 3] = [
+    ("Firefox", "org.mozilla.firefox"),
+    ("Chrome", "com.google.Chrome"),
+    ("Edge", "com.microsoft.edgemac"),
+];
+
+fn browser_app(tag: isize) -> Option<Retained<NSURL>> {
+    let (_, id) = BROWSERS.get(usize::try_from(tag).ok()?)?;
+    NSWorkspace::sharedWorkspace().URLForApplicationWithBundleIdentifier(&crate::ns(id))
+}
+
 impl App {
+    fn file_on_disk(&self) -> Option<std::path::PathBuf> {
+        self.current()
+            .and_then(|i| self.tab(i)?.path)
+            .filter(|p| p.exists())
+    }
+
+    // NppCommands.cpp IDM_VIEW_IN_FIREFOX, IDM_VIEW_IN_CHROME, IDM_VIEW_IN_EDGE: the browser opens the saved file.
+    pub(crate) fn view_in_browser(&self, tag: isize) {
+        let (Some(p), Some(app)) = (self.file_on_disk(), browser_app(tag)) else {
+            return;
+        };
+        let url = NSURL::fileURLWithPath(&crate::ns(&p.to_string_lossy()));
+        NSWorkspace::sharedWorkspace().openURLs_withApplicationAtURL_configuration_completionHandler(
+            &NSArray::from_retained_slice(&[url]),
+            &app,
+            &NSWorkspaceOpenConfiguration::configuration(),
+            None,
+        );
+    }
+
+    // The browser items need a file on disk and the browser application.
+    pub(crate) fn validate_browser(&self, item: &NSMenuItem) -> Option<bool> {
+        if item.action()? != sel!(viewInBrowser:) {
+            return None;
+        }
+        Some(self.file_on_disk().is_some() && browser_app(item.tag()).is_some())
+    }
+
     fn view_opts(&self) -> Opts {
         self.ivars().view.get()
     }
@@ -695,6 +737,11 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             })
             .collect()
     };
+    let browsers = BROWSERS
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| tagged(mtm, name, sel!(viewInBrowser:), i as isize, t))
+        .collect();
     vec![
         keyed(mtm, "Show Toolbar", sel!(toggleToolbarShown:), 0, "t", opt | cmd, None),
         sep(),
@@ -702,6 +749,8 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         item(mtm, "Toggle Full Screen Mode", sel!(fullScreen:), "", t),
         keyed(mtm, "Post-It", sel!(postIt:), 0, "\u{F70F}", NSEventModifierFlags::empty(), t),
         item(mtm, "Distraction Free Mode", sel!(distractionFree:), "", t),
+        sep(),
+        nested(mtm, "View Current File in", browsers),
         sep(),
         nested(mtm, "Show Symbol", symbols),
         nested(mtm, "Zoom", zoom),
