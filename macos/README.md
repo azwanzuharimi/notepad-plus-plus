@@ -8,6 +8,13 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Typing helpers):
+
+- Auto-indent (Settings > Preferences > Indentation: None, Basic, Advanced; default Advanced; `<GUIConfig name="MaintainIndent">`). Advanced has the Notepad++ `{` `}` and `if`/`for`/`while`/`else` rules for C-like languages and the `:` rule for Python.
+- Brace highlight: the brace at the caret and its match use the "Brace highlight style", an unmatched brace uses "Bad brace colour", and the indent guide of the pair is highlighted.
+- Auto-Insert of `()`, `[]`, `{}`, `""`, `''` and the HTML/XML close tag, with the Notepad++ rules: a typed closing character goes over the inserted one, quotes only next to blanks or brackets, void HTML tags get no close tag, and nothing is inserted with more than one selection. `<UserDefinePair open close>` pairs of `config.xml` also work.
+- Not done: the three "Matched pair" fields of the Auto-Completion page, auto-indent for external lexers, and the large file limits.
+
 2026-10-10 (Shortcut Mapper):
 
 - Settings > Shortcut Mapper...: tabs Main menu, Macros, Run commands and Scintilla commands, with Name, Shortcut and Category columns, a filter, and Modify, Clear, Delete and Close. Rows with a conflict are red, and the conflict list shows below the table, as in Notepad++. A double click opens Modify. There is no Plugin commands tab.

@@ -11,6 +11,7 @@ mod context_menu;
 mod docking;
 mod docmap;
 mod edit;
+mod edit_assist;
 mod edit_extras;
 mod encoding;
 mod filebrowser;
@@ -239,6 +240,7 @@ define_class!(
                 self.refresh_labels();
             }
             if h.code == sci::SCN_UPDATEUI && h.id_from != sci::RESULTS_ID {
+                self.editor().inspect(|v| crate::edit_assist::brace_match(v));
                 self.update_status();
                 self.schedule_smart_highlight();
                 self.function_list_mark();
