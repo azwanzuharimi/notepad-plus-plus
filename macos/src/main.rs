@@ -746,6 +746,11 @@ define_class!(
             self.macro_show_load_error();
         }
 
+        #[unsafe(method(macroMenuWillSend:))]
+        fn macro_menu_will_send_action(&self, _n: &NSNotification) {
+            self.macro_menu_will_send();
+        }
+
         #[unsafe(method(macroMenuDidSend:))]
         fn macro_menu_did_send_action(&self, n: &NSNotification) {
             self.macro_menu_did_send(n);

@@ -109,7 +109,7 @@ pub struct Shortcuts {
     pub commands: Vec<Command>,
 }
 
-// macOS forms of the Notepad++ default user commands; the Windows ones do not run on macOS.
+// The Notepad++ default macro, and macOS forms of the Notepad++ default user commands; the Windows ones do not run on macOS.
 pub fn defaults() -> Shortcuts {
     let cmd = |name: &str, key: u8, cmd: &str| Command {
         name: name.into(),
@@ -122,7 +122,17 @@ pub fn defaults() -> Shortcuts {
         cmd: cmd.into(),
     };
     Shortcuts {
-        macros: vec![],
+        macros: vec![Macro {
+            name: "Trim Trailing Space and Save".into(),
+            key: Key {
+                alt: true,
+                shift: true,
+                key: 83,
+                ..Key::default()
+            },
+            folder: String::new(),
+            steps: vec![Step::menu(42024), Step::menu(41006)],
+        }],
         commands: vec![
             cmd(
                 "Get PHP help",
@@ -469,6 +479,21 @@ mod tests {
         let c = &c[..c.find("default").unwrap()];
         assert_eq!(cases(c), STRING_MSGS);
         assert_eq!(sci_number(h, "SCI_NEWLINE"), SCI_NEWLINE);
+    }
+
+    #[test]
+    fn default_macro_is_the_notepad_plus_plus_one() {
+        let h =
+            include_str!("../../PowerEditor/src/MISC/Common/NppConstants.h").replace("\r\n", "\n");
+        let x = &h[h.find("SHORTCUT_XML_CONTENT[] = \"").unwrap() + 26..];
+        let x = &x[..x.find("\";\n").unwrap()];
+        let xml = x
+            .replace("\\\n", "")
+            .replace("\\r\\n", "\r\n")
+            .replace("\\\"", "\"");
+        let npp = parse(&xml).unwrap();
+        assert_eq!(npp.macros, defaults().macros);
+        assert_eq!(npp.commands.len(), 3);
     }
 
     #[test]

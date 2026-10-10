@@ -8,7 +8,8 @@ use objc2::runtime::{AnyObject, Sel};
 use objc2::{msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSApplication, NSButton, NSMenu,
-    NSMenuDidSendActionNotification, NSMenuItem, NSPopUpButton, NSTextField, NSView,
+    NSMenuDidSendActionNotification, NSMenuItem, NSMenuWillSendActionNotification, NSPopUpButton,
+    NSTextField, NSView,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString};
 use std::cell::{Cell, OnceCell, RefCell};
@@ -41,14 +42,36 @@ const IDF_WRAP: isize = 256;
 const IDF_WHICH_DIRECTION: isize = 512;
 const IDF_REDOTMATCHNL: isize = 1024;
 
-// Menu actions that call Scintilla directly on macOS, so Scintilla does not record them.
-const SCI_ACTIONS: [(&str, i32); 2] = [("paste:", 2179), ("selectAll:", 2013)];
-// Notepad++ does not record Cut and Copy as commands: Scintilla records SCI_CUT, SCI_COPY or the line commands.
-const NOT_RECORDED: [&str; 2] = ["cut:", "copy:"];
+// Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
+const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
+// Commands that Notepad++ does not record as type 2 steps; they still play back.
+const NOT_RECORDED: [&str; 14] = [
+    "IDM_EDIT_CUT",
+    "IDM_EDIT_COPY",
+    "IDM_EDIT_PASTE",
+    "IDM_EDIT_LINE_UP",
+    "IDM_EDIT_LINE_DOWN",
+    "IDM_EDIT_STREAM_UNCOMMENT",
+    "IDM_VIEW_TAB_START",
+    "IDM_VIEW_TAB_END",
+    "IDM_FOCUS_ON_FOUND_RESULTS",
+    "IDM_SEARCH_GOTONEXTFOUND",
+    "IDM_SEARCH_GOTOPREVFOUND",
+    "IDM_SEARCH_CHANGED_NEXT",
+    "IDM_SEARCH_CHANGED_PREV",
+    "IDM_SEARCH_CLEAR_CHANGE_HISTORY",
+];
+
+struct Cmd {
+    name: String,
+    id: i32,
+    action: &'static str,
+    tag: isize,
+}
 
 // Notepad++ commands (menuCmdID.h) that this app has in its menus; a tag of -1 matches all tags.
-fn menu_cmds() -> Vec<(&'static str, i32, &'static str, isize)> {
-    let mut v = vec![
+fn menu_cmds() -> Vec<Cmd> {
+    let mut v: Vec<(String, i32, &'static str, isize)> = [
         ("IDM_FILE_NEW", 41001, "newDocument:", -1),
         ("IDM_FILE_CLOSE", 41003, "closeTab:", -1),
         ("IDM_FILE_CLOSEALL", 41004, "closeMultiple:", 0),
@@ -64,9 +87,77 @@ fn menu_cmds() -> Vec<(&'static str, i32, &'static str, isize)> {
         ("IDM_EDIT_UNDO", 42003, "undo:", -1),
         ("IDM_EDIT_REDO", 42004, "redo:", -1),
         ("IDM_EDIT_PASTE", 42005, "paste:", -1),
+        ("IDM_EDIT_DELETE", 42006, "sciCommand:", 2180),
         ("IDM_EDIT_SELECTALL", 42007, "selectAll:", -1),
+        ("IDM_EDIT_INS_TAB", 42008, "editOp:", 10),
+        ("IDM_EDIT_RMV_TAB", 42009, "editOp:", 11),
+        ("IDM_EDIT_DUP_LINE", 42010, "sciCommand:", 2404),
+        ("IDM_EDIT_SPLIT_LINES", 42012, "editOp:", 3),
+        ("IDM_EDIT_JOIN_LINES", 42013, "editOp:", 4),
+        ("IDM_EDIT_LINE_UP", 42014, "sciCommand:", 2620),
+        ("IDM_EDIT_LINE_DOWN", 42015, "sciCommand:", 2621),
+        ("IDM_EDIT_BEGINENDSELECT", 42020, "beginEndSelect:", 0),
+        (
+            "IDM_EDIT_BEGINENDSELECT_COLUMNMODE",
+            42089,
+            "beginEndSelect:",
+            1,
+        ),
+        ("IDM_EDIT_BLOCK_COMMENT", 42022, "comment:", 0),
+        ("IDM_EDIT_BLOCK_COMMENT_SET", 42035, "comment:", 1),
+        ("IDM_EDIT_BLOCK_UNCOMMENT", 42036, "comment:", 2),
+        ("IDM_EDIT_STREAM_COMMENT", 42023, "comment:", 3),
+        ("IDM_EDIT_STREAM_UNCOMMENT", 42047, "comment:", 4),
+        ("IDM_EDIT_TRIMTRAILING", 42024, "editOp:", 60),
+        ("IDM_EDIT_TRIMLINEHEAD", 42042, "editOp:", 61),
+        ("IDM_EDIT_TRIM_BOTH", 42043, "editOp:", 62),
+        ("IDM_EDIT_EOL2WS", 42044, "editOp:", 63),
+        ("IDM_EDIT_TRIMALL", 42045, "editOp:", 64),
+        ("IDM_EDIT_TAB2SW", 42046, "editOp:", 65),
+        ("IDM_EDIT_SW2TAB_ALL", 42054, "editOp:", 66),
+        ("IDM_EDIT_SW2TAB_LEADING", 42053, "editOp:", 67),
+        ("IDM_EDIT_TOGGLEREADONLY", 42028, "toggleReadOnly:", -1),
+        ("IDM_EDIT_FULLPATHTOCLIP", 42029, "copyPathInfo:", 0),
+        ("IDM_EDIT_FILENAMETOCLIP", 42030, "copyPathInfo:", 1),
+        ("IDM_EDIT_CURRENTDIRTOCLIP", 42031, "copyPathInfo:", 2),
+        ("IDM_EDIT_REMOVEEMPTYLINES", 42055, "editOp:", 5),
+        ("IDM_EDIT_REMOVEEMPTYLINESWITHBLANK", 42056, "editOp:", 6),
+        ("IDM_EDIT_BLANKLINEABOVECURRENT", 42057, "editOp:", 7),
+        ("IDM_EDIT_BLANKLINEBELOWCURRENT", 42058, "editOp:", 8),
+        ("IDM_EDIT_REMOVE_ANY_DUP_LINES", 42079, "editOp:", 1),
+        ("IDM_EDIT_REMOVE_CONSECUTIVE_DUP_LINES", 42077, "editOp:", 2),
+        ("IDM_EDIT_SORTLINES_REVERSE_ORDER", 42083, "editOp:", 9),
+        (
+            "IDM_EDIT_INSERT_DATETIME_SHORT",
+            42084,
+            "insertDateTime:",
+            0,
+        ),
+        ("IDM_EDIT_INSERT_DATETIME_LONG", 42085, "insertDateTime:", 1),
         ("IDM_SEARCH_FINDNEXT", 43002, "findNext:", -1),
         ("IDM_SEARCH_FINDPREV", 43010, "findPrevious:", -1),
+        ("IDM_SEARCH_SETANDFINDNEXT", 43048, "searchCmd:", 0),
+        ("IDM_SEARCH_SETANDFINDPREV", 43049, "searchCmd:", 1),
+        ("IDM_SEARCH_VOLATILE_FINDNEXT", 43014, "searchCmd:", 2),
+        ("IDM_SEARCH_VOLATILE_FINDPREV", 43015, "searchCmd:", 3),
+        ("IDM_FOCUS_ON_FOUND_RESULTS", 43045, "searchCmd:", 4),
+        ("IDM_SEARCH_GOTONEXTFOUND", 43046, "searchCmd:", 5),
+        ("IDM_SEARCH_GOTOPREVFOUND", 43047, "searchCmd:", 6),
+        ("IDM_SEARCH_GOTOMATCHINGBRACE", 43009, "searchCmd:", 7),
+        ("IDM_SEARCH_SELECTMATCHINGBRACES", 43053, "searchCmd:", 8),
+        ("IDM_SEARCH_CHANGED_NEXT", 43067, "searchCmd:", 10),
+        ("IDM_SEARCH_CHANGED_PREV", 43068, "searchCmd:", 11),
+        ("IDM_SEARCH_CLEAR_CHANGE_HISTORY", 43069, "searchCmd:", 12),
+        ("IDM_SEARCH_TOGGLE_BOOKMARK", 43005, "searchCmd:", 20),
+        ("IDM_SEARCH_NEXT_BOOKMARK", 43006, "searchCmd:", 21),
+        ("IDM_SEARCH_PREV_BOOKMARK", 43007, "searchCmd:", 22),
+        ("IDM_SEARCH_CLEAR_BOOKMARKS", 43008, "searchCmd:", 23),
+        ("IDM_SEARCH_CUTMARKEDLINES", 43018, "searchCmd:", 24),
+        ("IDM_SEARCH_COPYMARKEDLINES", 43019, "searchCmd:", 25),
+        ("IDM_SEARCH_PASTEMARKEDLINES", 43020, "searchCmd:", 26),
+        ("IDM_SEARCH_DELETEMARKEDLINES", 43021, "searchCmd:", 27),
+        ("IDM_SEARCH_DELETEUNMARKEDLINES", 43051, "searchCmd:", 28),
+        ("IDM_SEARCH_INVERSEMARKS", 43050, "searchCmd:", 29),
         ("IDM_VIEW_ALWAYSONTOP", 44034, "alwaysOnTop:", -1),
         ("IDM_VIEW_FULLSCREENTOGGLE", 44032, "fullScreen:", -1),
         (
@@ -79,6 +170,8 @@ fn menu_cmds() -> Vec<(&'static str, i32, &'static str, isize)> {
         ("IDM_VIEW_UNFOLDALL", 44029, "foldAll:", 1),
         ("IDM_VIEW_FOLD_CURRENT", 44030, "foldCurrent:", 0),
         ("IDM_VIEW_UNFOLD_CURRENT", 44031, "foldCurrent:", 1),
+        ("IDM_VIEW_TAB_START", 44116, "selectTab:", 9),
+        ("IDM_VIEW_TAB_END", 44117, "selectTab:", 10),
         ("IDM_VIEW_TAB_NEXT", 44095, "selectTab:", 11),
         ("IDM_VIEW_TAB_PREV", 44096, "selectTab:", 12),
         ("IDM_VIEW_GOTO_START", 10005, "moveTab:", 0),
@@ -88,35 +181,89 @@ fn menu_cmds() -> Vec<(&'static str, i32, &'static str, isize)> {
         ("IDM_FORMAT_TODOS", 45001, "eolConvert:", 0),
         ("IDM_FORMAT_TOUNIX", 45002, "eolConvert:", 2),
         ("IDM_FORMAT_TOMAC", 45003, "eolConvert:", 1),
+    ]
+    .into_iter()
+    .map(|(n, i, a, t)| (n.to_string(), i, a, t))
+    .collect();
+    let cases = [
+        ("IDM_EDIT_UPPERCASE", 42016),
+        ("IDM_EDIT_LOWERCASE", 42017),
+        ("IDM_EDIT_PROPERCASE_FORCE", 42067),
+        ("IDM_EDIT_PROPERCASE_BLEND", 42068),
+        ("IDM_EDIT_SENTENCECASE_FORCE", 42069),
+        ("IDM_EDIT_SENTENCECASE_BLEND", 42070),
+        ("IDM_EDIT_INVERTCASE", 42071),
+        ("IDM_EDIT_RANDOMCASE", 42072),
     ];
+    for (k, (n, id)) in cases.into_iter().enumerate() {
+        v.push((n.into(), id, "editOp:", 40 + k as isize));
+    }
+    let sorts = [
+        ("LEXICOGRAPHIC", 42059),
+        ("LEXICO_CASE_INSENS", 42080),
+        ("INTEGER", 42061),
+        ("DECIMALCOMMA", 42063),
+        ("DECIMALDOT", 42065),
+    ];
+    for (k, (n, id)) in sorts.into_iter().enumerate() {
+        for (d, dir) in ["ASCENDING", "DESCENDING"].into_iter().enumerate() {
+            let tag = 20 + 2 * k as isize + d as isize;
+            v.push((
+                format!("IDM_EDIT_SORTLINES_{n}_{dir}"),
+                id + d as i32,
+                "editOp:",
+                tag,
+            ));
+        }
+    }
     for n in 0..8 {
-        v.push(("IDM_VIEW_FOLD_", 44051 + n, "foldLevel:", n as isize));
-        v.push(("IDM_VIEW_UNFOLD_", 44061 + n, "unfoldLevel:", n as isize));
+        v.push((
+            format!("IDM_VIEW_FOLD_{}", n + 1),
+            44051 + n,
+            "foldLevel:",
+            n as isize,
+        ));
+        v.push((
+            format!("IDM_VIEW_UNFOLD_{}", n + 1),
+            44061 + n,
+            "unfoldLevel:",
+            n as isize,
+        ));
     }
     for n in 0..9 {
-        v.push(("IDM_VIEW_TAB", 44086 + n, "selectTab:", n as isize));
+        v.push((
+            format!("IDM_VIEW_TAB{}", n + 1),
+            44086 + n,
+            "selectTab:",
+            n as isize,
+        ));
     }
-    v
+    v.into_iter()
+        .map(|(name, id, action, tag)| Cmd {
+            name,
+            id,
+            action,
+            tag,
+        })
+        .collect()
 }
 
 pub fn menu_step(action: &str, tag: isize) -> Option<Step> {
-    if NOT_RECORDED.contains(&action) {
-        return None;
-    }
     if let Some((_, m)) = SCI_ACTIONS.iter().find(|a| a.0 == action) {
         return Some(Step::new(shortcuts::TYPE_L, *m, 0, 0, ""));
     }
     menu_cmds()
         .into_iter()
-        .find(|c| c.2 == action && (c.3 == -1 || c.3 == tag))
-        .map(|c| Step::menu(c.1))
+        .find(|c| c.action == action && (c.tag == -1 || c.tag == tag))
+        .filter(|c| !NOT_RECORDED.contains(&c.name.as_str()))
+        .map(|c| Step::menu(c.id))
 }
 
 fn menu_action(id: i32) -> Option<(&'static str, isize)> {
     menu_cmds()
         .into_iter()
-        .find(|c| c.1 == id)
-        .map(|c| (c.2, c.3))
+        .find(|c| c.id == id)
+        .map(|c| (c.action, c.tag))
 }
 
 // Port of the "Run until the end of file" loop of the WM_MACRODLGRUNMACRO handler in NppBigSwitch.cpp.
@@ -219,6 +366,7 @@ struct State {
     store: RefCell<Shortcuts>,
     menus: OnceCell<[Retained<NSMenu>; 2]>,
     load_error: RefCell<Option<String>>,
+    mark: Cell<Option<usize>>,
     multi: OnceCell<MultiUi>,
 }
 
@@ -415,7 +563,13 @@ pub fn menus(mtm: MainThreadMarker, bar: &NSMenu, t: Option<&AnyObject>) {
                 sel!(macroMenuDidSend:),
                 Some(NSMenuDidSendActionNotification),
                 None,
-            )
+            );
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                t,
+                sel!(macroMenuWillSend:),
+                Some(NSMenuWillSendActionNotification),
+                None,
+            );
         };
         if S.with(|s| s.load_error.borrow().is_some()) {
             let _: () = unsafe {
@@ -528,9 +682,24 @@ impl App {
         if item.target().is_none() && !main_key {
             return;
         }
+        let mark = S.with(|s| s.mark.take());
         if let Some(step) = menu_step(action.name().to_str().unwrap_or(""), item.tag()) {
-            S.with(|s| s.current.borrow_mut().push(step));
+            S.with(|s| {
+                let mut cur = s.current.borrow_mut();
+                // The command plays back as one step, so the Scintilla steps that it sent are not kept.
+                if let Some(m) = mark.filter(|_| step.kind == TYPE_MENU) {
+                    cur.truncate(m);
+                }
+                cur.push(step);
+            });
         }
+    }
+
+    pub(crate) fn macro_menu_will_send(&self) {
+        S.with(|s| {
+            s.mark
+                .set(s.recording.get().then(|| s.current.borrow().len()))
+        });
     }
 
     fn macro_menu_command(&self, id: i32) {
@@ -856,42 +1025,153 @@ mod tests {
         assert_eq!(menu_step("eolConvert:", 2), Some(Step::menu(45002)));
         assert_eq!(menu_step("eolConvert:", 1), Some(Step::menu(45003)));
         assert_eq!(menu_step("cut:", 0), None);
+        assert_eq!(menu_step("comment:", 4), None);
         assert_eq!(menu_action(42001), Some(("cut:", -1)));
+        assert_eq!(menu_action(42047), Some(("comment:", 4)));
         assert_eq!(
             menu_step("paste:", 0),
             Some(Step::new(shortcuts::TYPE_L, 2179, 0, 0, ""))
         );
         assert_eq!(menu_step("macroPlayback:", 0), None);
-        assert_eq!(menu_action(42007), Some(("selectAll:", -1)));
-        assert_eq!(menu_action(42024), None);
-        let src = include_str!("../../PowerEditor/src/menuCmdID.h");
-        for (name, id, _, tag) in menu_cmds() {
-            let name = match name.strip_suffix('_').or(name.strip_suffix("TAB")) {
-                Some(_) => format!("{name}{}", tag + 1),
-                None => name.to_string(),
-            };
-            assert_eq!(id_of(src, &name), id, "{name}");
-        }
+        assert_eq!(menu_step("selectAll:", 0), Some(Step::menu(42007)));
+        assert_eq!(menu_step("editOp:", 60), Some(Step::menu(42024)));
+        assert_eq!(menu_step("editOp:", 25), Some(Step::menu(42062)));
+        assert_eq!(menu_step("selectTab:", 3), Some(Step::menu(44089)));
+        assert_eq!(menu_step("selectTab:", 9), None);
+        assert_eq!(menu_action(44116), Some(("selectTab:", 9)));
+        assert_eq!(menu_step("unfoldLevel:", 7), Some(Step::menu(44068)));
+    }
+
+    #[test]
+    fn command_table_matches_sources() {
+        let ids = include_str!("../../PowerEditor/src/menuCmdID.h");
+        let cmds = include_str!("../../PowerEditor/src/NppCommands.cpp").replace("\r\n", "\n");
+        let block = &cmds[cmds
+            .find("\tif (_recordingMacro)\n\t\tswitch (id)")
+            .unwrap()..];
+        let block = &block[..block.find("\n}\n").unwrap()];
+        let (rec, rest) = block.split_once("// No need to record").unwrap();
+        let (_, rec2) = rest.split_once("// The following 3 commands").unwrap();
+        let recorded: Vec<&str> = [rec, rec2]
+            .iter()
+            .flat_map(|b| b.split("case ").skip(1))
+            .map(|c| c.split([' ', ':', '\t']).next().unwrap())
+            .collect();
         let menus = [
             include_str!("main.rs"),
             include_str!("view.rs"),
             include_str!("fileops.rs"),
             include_str!("edit.rs"),
+            include_str!("search_extras.rs"),
+            include_str!("language.rs"),
         ]
         .concat();
-        for (_, _, action, _) in menu_cmds() {
-            assert!(menus.contains(&format!("sel!({action})")), "{action}");
+        let table = menu_cmds();
+        for c in &table {
+            assert_eq!(id_of(ids, &c.name), c.id, "{}", c.name);
+            assert!(
+                menus.contains(&format!("sel!({})", c.action)),
+                "{}",
+                c.action
+            );
+            assert_eq!(
+                recorded.contains(&c.name.as_str()),
+                !NOT_RECORDED.contains(&c.name.as_str()),
+                "{}",
+                c.name
+            );
+            assert_eq!(
+                table.iter().filter(|d| d.id == c.id).count(),
+                1,
+                "{}",
+                c.name
+            );
+            let same =
+                |d: &&Cmd| d.action == c.action && (d.tag == c.tag || d.tag == -1 || c.tag == -1);
+            assert_eq!(table.iter().filter(same).count(), 1, "{}", c.name);
         }
-        let view = include_str!("view.rs");
-        for c in [
-            "NEXT: usize = 11",
-            "PREV: usize = 12",
-            "TO_START: usize = 0",
-            "TO_END: usize = 1",
-            "FORWARD: usize = 2",
-            "BACKWARD: usize = 3",
-        ] {
-            assert!(view.contains(c), "{c}");
+        let consts = [
+            (include_str!("view.rs"), "NEXT: usize = 11"),
+            (include_str!("view.rs"), "PREV: usize = 12"),
+            (include_str!("view.rs"), "FIRST: usize = 9"),
+            (include_str!("view.rs"), "LAST: usize = 10"),
+            (include_str!("view.rs"), "TO_START: usize = 0"),
+            (include_str!("view.rs"), "TO_END: usize = 1"),
+            (include_str!("view.rs"), "FORWARD: usize = 2"),
+            (include_str!("view.rs"), "BACKWARD: usize = 3"),
+            (include_str!("edit.rs"), "DEDUP: isize = 1;"),
+            (include_str!("edit.rs"), "DEDUP_NEXT: isize = 2;"),
+            (include_str!("edit.rs"), "SPLIT: isize = 3;"),
+            (include_str!("edit.rs"), "JOIN: isize = 4;"),
+            (include_str!("edit.rs"), "RM_EMPTY: isize = 5;"),
+            (include_str!("edit.rs"), "RM_BLANK: isize = 6;"),
+            (include_str!("edit.rs"), "LINE_ABOVE: isize = 7;"),
+            (include_str!("edit.rs"), "LINE_BELOW: isize = 8;"),
+            (include_str!("edit.rs"), "REVERSE: isize = 9;"),
+            (include_str!("edit.rs"), "INDENT: isize = 10;"),
+            (include_str!("edit.rs"), "OUTDENT: isize = 11;"),
+            (include_str!("edit.rs"), "SORT: isize = 20;"),
+            (include_str!("edit.rs"), "CASE: isize = 40;"),
+            (include_str!("edit.rs"), "TRIM_TRAIL: isize = 60;"),
+            (include_str!("edit.rs"), "TRIM_LEAD: isize = 61;"),
+            (include_str!("edit.rs"), "TRIM_BOTH: isize = 62;"),
+            (include_str!("edit.rs"), "EOL_TO_SPACE: isize = 63;"),
+            (include_str!("edit.rs"), "TRIM_ALL: isize = 64;"),
+            (include_str!("edit.rs"), "TAB_TO_SPACE: isize = 65;"),
+            (include_str!("edit.rs"), "SPACE_TO_TAB: isize = 66;"),
+            (include_str!("edit.rs"), "SPACE_TO_TAB_LEAD: isize = 67;"),
+            (include_str!("edit.rs"), "(\"Lexicographically\", Sort::Lex),\n    (\"Lex. %s Ignoring Case\", Sort::LexIgnoreCase),\n    (\"As Integers\", Sort::Integer),\n    (\"As Decimals (Comma)\", Sort::DecimalComma),\n    (\"As Decimals (Dot)\", Sort::DecimalDot),"),
+            (include_str!("edit.rs"), "Case::Upper),\n    (\"lowercase\", Case::Lower),\n    (\"Proper Case\", Case::ProperForce),\n    (\"Proper Case (blend)\", Case::ProperBlend),\n    (\"Sentence case\", Case::SentenceForce),\n    (\"Sentence case (blend)\", Case::SentenceBlend),\n    (\"iNVERT cASE\", Case::Invert),\n    (\"ranDOm CasE\", Case::Random),"),
+            (include_str!("comment.rs"), "(\"Toggle Single Line Comment\", Cmd::Toggle),\n    (\"Single Line Comment\", Cmd::Comment),\n    (\"Single Line Uncomment\", Cmd::Uncomment),\n    (\"Block Comment\", Cmd::Stream),\n    (\"Block Uncomment\", Cmd::StreamUncomment),"),
+            (include_str!("edit.rs"), "SCI_CLEAR: u32 = 2180;"),
+            (include_str!("edit.rs"), "SCI_LINEDUPLICATE: u32 = 2404;"),
+            (include_str!("edit.rs"), "SCI_MOVESELECTEDLINESUP: u32 = 2620;"),
+            (include_str!("edit.rs"), "SCI_MOVESELECTEDLINESDOWN: u32 = 2621;"),
+        ];
+        for (src, c) in consts {
+            assert!(src.contains(c), "{c}");
+        }
+        let se = include_str!("search_extras.rs");
+        let names = [
+            "SELECT_NEXT",
+            "SELECT_PREV",
+            "VOLATILE_NEXT",
+            "VOLATILE_PREV",
+            "RESULTS_WINDOW",
+            "NEXT_RESULT",
+            "PREV_RESULT",
+            "GOTO_BRACE",
+            "SELECT_BRACES",
+        ];
+        for (k, n) in names.iter().enumerate() {
+            assert!(se.contains(&format!("const {n}: isize = {k};")), "{n}");
+        }
+        let names = [
+            "TOGGLE_BOOKMARK",
+            "NEXT_BOOKMARK",
+            "PREV_BOOKMARK",
+            "CLEAR_BOOKMARKS",
+            "CUT_MARKED",
+            "COPY_MARKED",
+            "PASTE_MARKED",
+            "REMOVE_MARKED",
+            "REMOVE_UNMARKED",
+            "INVERSE_MARKS",
+        ];
+        for (k, n) in names.iter().enumerate() {
+            assert!(
+                se.contains(&format!("const {n}: isize = {};", 20 + k)),
+                "{n}"
+            );
+        }
+        for (k, n) in ["NEXT_CHANGE", "PREV_CHANGE", "CLEAR_CHANGES"]
+            .iter()
+            .enumerate()
+        {
+            assert!(
+                se.contains(&format!("const {n}: isize = {};", 10 + k)),
+                "{n}"
+            );
         }
         use crate::fileops::Close;
         assert_eq!(
@@ -905,9 +1185,6 @@ mod tests {
             .map(|c| c as isize),
             [0, 1, 2, 3, 4]
         );
-        assert_eq!(menu_step("selectTab:", 3), Some(Step::menu(44089)));
-        assert_eq!(menu_step("selectTab:", 9), None);
-        assert_eq!(menu_step("unfoldLevel:", 7), Some(Step::menu(44068)));
     }
 
     #[test]
