@@ -540,7 +540,9 @@ impl App {
             .map(|t| t.view.clone());
         if let Some(v) = view {
             let l = sci::send(&v, sci::SCI_LINEFROMPOSITION, n.position as usize, 0);
-            toggle_bookmark(&v, l);
+            if !crate::view_extras::hide_marker_clicked(&v, l) {
+                toggle_bookmark(&v, l);
+            }
         }
     }
 

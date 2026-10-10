@@ -263,6 +263,9 @@ impl App {
         b.view.setHidden(!show);
         let Some(split) = self.editor_area() else { return };
         let mut f = split.frame();
+        if show {
+            b.view.setFrameOrigin(NSPoint::new(0., f.origin.y));
+        }
         let d = if show { BAR_H } else { -BAR_H };
         f.origin.y += d;
         f.size.height -= d;

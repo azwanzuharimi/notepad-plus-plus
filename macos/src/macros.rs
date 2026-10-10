@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 49] = [
+const NOT_RECORDED: [&str; 54] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -95,6 +95,11 @@ const NOT_RECORDED: [&str; 49] = [
     "IDM_LANG_OPENUDLDIR",
     "IDM_LANG_UDLCOLLECTION_PROJECT_SITE",
     "IDM_SETTING_PREFERENCE",
+    "IDM_VIEW_POSTIT",
+    "IDM_VIEW_DISTRACTIONFREE",
+    "IDM_VIEW_HIDELINES",
+    "IDM_VIEW_MONITORING",
+    "IDM_SETTING_EDITCONTEXTMENU",
 ];
 
 struct Cmd {
@@ -205,6 +210,11 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_VIEW_FULLSCREENTOGGLE", 44032, "fullScreen:", -1),
         ("IDM_VIEW_DOCLIST", 44070, "toggleDocList:", -1),
         ("IDM_VIEW_FUNC_LIST", 44084, "toggleFunctionList:", -1),
+        ("IDM_VIEW_POSTIT", 44009, "postIt:", -1),
+        ("IDM_VIEW_DISTRACTIONFREE", 44011, "distractionFree:", -1),
+        ("IDM_VIEW_HIDELINES", 44042, "hideLines:", -1),
+        ("IDM_VIEW_MONITORING", 44097, "monitoring:", -1),
+        ("IDM_SETTING_EDITCONTEXTMENU", 48018, "editContextMenu:", -1),
         (
             "IDM_VIEW_WRAP",
             44022,
@@ -352,7 +362,7 @@ pub fn menu_step(action: &str, tag: isize) -> Option<Step> {
         .map(|c| Step::menu(c.id))
 }
 
-fn menu_action(id: i32) -> Option<(&'static str, isize)> {
+pub(crate) fn menu_action(id: i32) -> Option<(&'static str, isize)> {
     menu_cmds()
         .into_iter()
         .find(|c| c.id == id)
@@ -517,7 +527,7 @@ fn save() -> Result<(), String> {
     write_file(&path, &text)
 }
 
-fn find_item(m: &NSMenu, action: Sel, tag: isize) -> Option<(Retained<NSMenu>, isize)> {
+pub(crate) fn find_item(m: &NSMenu, action: Sel, tag: isize) -> Option<(Retained<NSMenu>, isize)> {
     for i in 0..m.numberOfItems() {
         let it = m.itemAtIndex(i)?;
         if it.action() == Some(action) && (tag == -1 || it.tag() == tag) {
@@ -1163,6 +1173,7 @@ mod tests {
             include_str!("style_dlg.rs"),
             include_str!("udl/mod.rs"),
             include_str!("prefs.rs"),
+            include_str!("context_menu.rs"),
         ]
         .concat();
         let table = menu_cmds();

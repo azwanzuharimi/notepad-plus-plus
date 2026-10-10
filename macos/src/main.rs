@@ -5,6 +5,7 @@ mod binary;
 mod comment;
 mod column;
 mod config;
+mod context_menu;
 mod docking;
 mod edit;
 mod encoding;
@@ -29,6 +30,7 @@ mod styler;
 mod tools;
 mod udl;
 mod view;
+mod view_extras;
 mod window;
 
 use encoding::Enc;
@@ -1107,6 +1109,38 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(editContextMenu:))]
+        fn edit_context_menu_action(&self, _s: Option<&AnyObject>) {
+            self.edit_context_menu();
+        }
+
+        #[unsafe(method(hideLines:))]
+        fn hide_lines_action(&self, _s: Option<&AnyObject>) {
+            self.hide_lines();
+        }
+
+        #[unsafe(method(monitoring:))]
+        fn monitoring_action(&self, _s: Option<&AnyObject>) {
+            self.monitoring();
+        }
+
+        #[unsafe(method(monitorTick:))]
+        fn monitor_tick_action(&self, _s: Option<&AnyObject>) {
+            self.monitor_tick();
+        }
+
+        #[unsafe(method(postIt:))]
+        fn post_it_action(&self, _s: Option<&AnyObject>) {
+            self.post_it();
+        }
+
+        #[unsafe(method(distractionFree:))]
+        fn distraction_free_action(&self, _s: Option<&AnyObject>) {
+            self.distraction_free();
+        }
+    }
+
     unsafe impl NSTableViewDataSource for App {}
 
     unsafe impl NSOutlineViewDataSource for App {}
@@ -1601,6 +1635,7 @@ impl App {
         sci::setup_change_history(&view, cfg());
         sci::setup_multi_selection(&view);
         mark::setup_indicators(&view, cfg());
+        self.setup_extras(&view);
         let name = match &path {
             Some(p) => p
                 .file_name()
@@ -1636,6 +1671,9 @@ impl App {
 
     // Checkmarks for the current encoding and EOL; format commands are off while Replace in Files runs.
     fn validate(&self, item: &NSMenuItem) -> bool {
+        if let Some(r) = self.validate_extras(item) {
+            return r;
+        }
         if let Some(r) = self.validate_edit(item) {
             return r;
         }
@@ -2003,6 +2041,7 @@ fn main() {
         m.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), 0);
         m.insertItem_atIndex(&item(mtm, "About Notepad++", sel!(showAbout:), "", t), 0);
     }
+    context_menu::install(mtm, &bar, t);
     app.setMainMenu(Some(&bar));
     app.run();
 }
