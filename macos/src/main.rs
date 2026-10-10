@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod autoc;
+mod backup;
 mod binary;
 mod comment;
 mod column;
@@ -208,6 +209,7 @@ define_class!(
                 self.macro_record(scn);
             }
             self.autoc_notify(scn);
+            backup::notify(scn);
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 let n = self.ivars().tabs.borrow().len();
                 (0..n).for_each(|i| self.refresh_title(i));
@@ -1015,6 +1017,13 @@ define_class!(
     }
 
     impl App {
+        #[unsafe(method(backupTick:))]
+        fn backup_tick_action(&self, _s: Option<&AnyObject>) {
+            self.backup_tick();
+        }
+    }
+
+    impl App {
         #[unsafe(method(showIncrementalSearch:))]
         fn show_incremental_search_action(&self, _s: Option<&AnyObject>) {
             self.show_incremental_search();
@@ -1147,14 +1156,9 @@ define_class!(
                 self.alert("Replace in Files is still running.", "Quit again when it is done.", &["OK"]);
                 return NSApplicationTerminateReply::TerminateCancel;
             }
-            let session = self.current_session(false);
-            let n = self.ivars().tabs.borrow().len();
-            for i in 0..n {
-                self.tab_view().selectTabViewItemAtIndex(i as isize);
-                if !self.confirm_close(i) {
-                    return NSApplicationTerminateReply::TerminateCancel;
-                }
-            }
+            let Some(session) = self.quit_session() else {
+                return NSApplicationTerminateReply::TerminateCancel;
+            };
             self.udl_flush();
             self.save_on_quit(&session);
             NSApplicationTerminateReply::TerminateNow
@@ -1608,6 +1612,7 @@ impl App {
                 format!("new {}", self.ivars().untitled.get())
             }
         };
+        backup::file_loaded(&view, path.as_deref());
         let item = NSTabViewItem::new();
         item.setView(Some(&view));
         self.ivars().tabs.borrow_mut().push(Tab {
@@ -1688,6 +1693,7 @@ impl App {
         let Some(t) = self.tab(i) else { return };
         let (text, lost) = encoding::decode(b, e);
         sci::reload(&t.view, &text);
+        backup::file_loaded(&t.view, t.path.as_deref());
         if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
             t.lost = lost;
         }
@@ -1757,9 +1763,14 @@ impl App {
                 None => return false,
             },
         };
+        if !ask && tab.path.is_some() && !self.backup_on_save(&path) {
+            return false;
+        }
         let Some(enc) = self.write_tab(&tab, &path) else {
             return false;
         };
+        self.drop_backup(&tab.view);
+        backup::file_loaded(&tab.view, Some(&path));
         let renamed = tab.path.as_deref() != Some(&path);
         if renamed {
             self.recent_saved_as(tab.path.as_deref(), &path);
@@ -1963,6 +1974,7 @@ fn encoding_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
 
 fn main() {
     let mtm = MainThreadMarker::new().unwrap();
+    backup::install_panic_hook();
     search::warm_up();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);

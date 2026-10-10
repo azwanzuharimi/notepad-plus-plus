@@ -8,6 +8,18 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (session snapshot and backup):
+
+- Session snapshot and periodic backup is on by default, every 7 seconds, as in Notepad++. Each modified tab, and each untitled tab with text, is written to `backup/<name>@<YYYY-MM-DD_HHMMSS>` in the settings folder, in the tab encoding and line ends. Only text that changed after the last backup is written. Each write goes to a temporary file first, so a failed write keeps the old backup. The timer also runs while a dialog shows. Then `session.xml` is written with the Notepad++ `backupFilePath` and `originalFileLastModifTimestamp` attributes.
+- When snapshot mode is on, Quit does not ask to save. Modified and untitled tabs open again at the next start as modified tabs, with the file path kept. A file that Finder opens at start gets its backup text too. The empty "new 1" tab closes when the session restores tabs. If a backup file is missing at quit, or the last write failed, Notepad++'s "Your backup file cannot be found" question shows. When the option is off, or with `-nosession`, Quit asks for each modified tab as before.
+- At start, if a file changed on disk after its backup, Notepad++'s "This file has been modified by another program. Do you want to reload it and lose the changes made in Notepad++?" question shows. No is the default.
+- A backup is deleted when its tab is saved, or closed without a save. The app never deletes other files in the backup folder. A backup that does not load stays. An unreadable `session.xml` is moved to `session.xml.unreadable`.
+- In snapshot mode, if the app panics on the main thread, it writes the backups and `session.xml` before it stops. A panic on another thread writes nothing; the last periodic backup is at most 7 seconds old.
+- Backup on save: None (default), Simple (`<file>.bak` next to the file), or Verbose (`nppBackup/<file>.<YYYY-MM-DD_HHMMSS>.bak`), with an optional custom folder, as in Notepad++. The settings are read from `<GUIConfig name="Backup" ...>` in `config.xml`. There is no Preferences page for them yet.
+- A backup of a tab whose text the encoding cannot hold is written as UTF-8 with a BOM. A character set tab keeps its character set after a restore, so Save shows the "characters cannot be saved" question. For ANSI and UTF-16 tabs an alert tells you once that the tab opens as UTF-8 with BOM after a restore.
+- Not done: a file deleted after its backup opens with its path, not as an untitled tab. Environment variables in the custom backup folder are not expanded.
+
+
 2026-10-10 (Preferences):
 
 - Settings > Preferences... (Cmd+,) opens the Notepad++ Preferences window: a list of pages on the left and the page on the right. The pages are Editing 1, Editing 2, Margins/Border/Edge, New Document, Default Directory, Recent Files History, Indentation, Highlighting, Searching, Auto-Completion, Cloud & Link, Search Engine, and MISC., with the Notepad++ labels and defaults.
@@ -117,7 +129,7 @@ Not affiliated with the Notepad++ project.
 - File > Load Session... and Save Session... use the Notepad++ `session.xml` format. Sessions from Notepad++ on Windows load; files that do not exist are skipped. The files of the second view open in the same tab bar.
 - Recent files: the last 10 closed files show at the end of the File menu, with Restore Recent Closed File (Shift+Cmd+T), Open All Recent Files, and Empty Recent Files List. The list is in the `<History>` element of `config.xml`. `nbMaxFile` and `inSubMenu` in that file change the size and the place of the list. A recent file that does not exist leaves the list, and Notepad++'s "Create it?" question shows.
 - The settings folder is `~/Library/Application Support/notepadpp-mac/`. Each file is written to a temporary file first, then renamed. Before each write, the old `session.xml` is copied to `session.xml.inCaseOfCorruption.bak`, and that copy is used when `session.xml` does not load, as in Notepad++. If `config.xml` cannot be read, an alert shows at start and the app does not write `config.xml`.
-- Not done: the backup of new and modified tabs (snapshot mode); bookmarks and folds in sessions; the wrapped first line position.
+- Not done: bookmarks and folds in sessions; the wrapped first line position.
 - Tools menu: MD5, SHA-1, SHA-256, and SHA-512, each with Generate..., Generate from files..., and Generate from selection into clipboard. The hashes come from macOS CommonCrypto.
 - As in Notepad++, the selection and the Generate... text stop at the first NUL byte. The selection hash uses the UTF-8 bytes of the tab, also when the file encoding is different.
 - In Generate..., the text box uses LF line ends. A hash of more than one line is different from Notepad++ on Windows (CR LF). Generate from files... skips a file larger than 4 GiB.
