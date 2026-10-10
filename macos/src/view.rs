@@ -681,7 +681,9 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             shift,
             t,
         ),
+        sep(),
     ]);
+    tabs.extend(crate::tabbar::colour_items(mtm, t));
     let levels = |action: Sel, mods: NSEventModifierFlags| -> Vec<_> {
         (1..=8)
             .map(|n| {

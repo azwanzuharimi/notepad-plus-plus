@@ -1169,6 +1169,11 @@ define_class!(
             self.toggle_pin();
         }
 
+        #[unsafe(method(tabColour:))]
+        fn tab_colour_action(&self, s: &NSMenuItem) {
+            self.set_tab_colour(s.tag());
+        }
+
         #[unsafe(method(closeAllButPinned:))]
         fn close_all_but_pinned_action(&self, _s: Option<&AnyObject>) {
             self.close_all_but_pinned();

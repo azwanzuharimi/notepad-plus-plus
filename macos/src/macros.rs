@@ -45,8 +45,14 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 62] = [
+const NOT_RECORDED: [&str; 68] = [
     "IDM_PINTAB",
+    "IDM_VIEW_TAB_COLOUR_NONE",
+    "IDM_VIEW_TAB_COLOUR_1",
+    "IDM_VIEW_TAB_COLOUR_2",
+    "IDM_VIEW_TAB_COLOUR_3",
+    "IDM_VIEW_TAB_COLOUR_4",
+    "IDM_VIEW_TAB_COLOUR_5",
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -130,6 +136,12 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_FILE_CLOSEALL_UNCHANGED", 41024, "closeMultiple:", 4),
         ("IDM_FILE_CLOSEALL_BUT_PINNED", 41026, "closeAllButPinned:", -1),
         ("IDM_PINTAB", 44048, "pinTab:", -1),
+        ("IDM_VIEW_TAB_COLOUR_NONE", 44110, "tabColour:", 5),
+        ("IDM_VIEW_TAB_COLOUR_1", 44111, "tabColour:", 0),
+        ("IDM_VIEW_TAB_COLOUR_2", 44112, "tabColour:", 1),
+        ("IDM_VIEW_TAB_COLOUR_3", 44113, "tabColour:", 2),
+        ("IDM_VIEW_TAB_COLOUR_4", 44114, "tabColour:", 3),
+        ("IDM_VIEW_TAB_COLOUR_5", 44115, "tabColour:", 4),
         ("IDM_FILE_SAVE", 41006, "saveDocument:", -1),
         ("IDM_FILE_SAVEALL", 41007, "saveAll:", -1),
         ("IDM_FILE_RELOAD", 41014, "reloadFromDisk:", -1),

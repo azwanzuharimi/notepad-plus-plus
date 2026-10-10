@@ -262,6 +262,7 @@ fn tab_items() -> Vec<(&'static str, &'static str, Option<(Sel, isize)>)> {
     let open = "Open into";
     let clip = "Copy to Clipboard";
     let doc = "Move Document";
+    let color = "Apply Color to Tab";
     vec![
         ("Close", "", Some((sel!(closeTab:), -1))),
         ("Close All BUT This", multi, close(1)),
@@ -311,6 +312,15 @@ fn tab_items() -> Vec<(&'static str, &'static str, Option<(Sel, isize)>)> {
         ),
         ("Move to Start", doc, Some((sel!(moveTab:), 0))),
         ("Move to End", doc, Some((sel!(moveTab:), 1))),
+        ("", doc, None),
+        ("Move to Other View", doc, Some((sel!(moveToOtherView:), -1))),
+        ("Clone to Other View", doc, Some((sel!(cloneToOtherView:), -1))),
+        ("Apply Color 1", color, Some((sel!(tabColour:), 0))),
+        ("Apply Color 2", color, Some((sel!(tabColour:), 1))),
+        ("Apply Color 3", color, Some((sel!(tabColour:), 2))),
+        ("Apply Color 4", color, Some((sel!(tabColour:), 3))),
+        ("Apply Color 5", color, Some((sel!(tabColour:), 4))),
+        ("Remove Color", color, Some((sel!(tabColour:), 5))),
     ]
 }
 
@@ -709,7 +719,10 @@ mod tests {
             matches!(&out[5], Out::Folder(n, s) if n == "Open into" && s.len() == 4 && s[2] == Out::Sep)
         );
         assert!(
-            matches!(out.last(), Some(Out::Folder(n, s)) if n == "Move Document" && s.len() == 2)
+            matches!(&out[out.len() - 2], Out::Folder(n, s) if n == "Move Document" && s.len() == 5)
+        );
+        assert!(
+            matches!(out.last(), Some(Out::Folder(n, s)) if n == "Apply Color to Tab" && s.len() == 6)
         );
     }
 }

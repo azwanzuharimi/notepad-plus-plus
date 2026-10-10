@@ -160,6 +160,7 @@ pub fn moved_to(from: usize, slot: usize) -> usize {
 }
 
 thread_local! {
+    static COLOURS: RefCell<Vec<(Retained<NSTabViewItem>, usize)>> = const { RefCell::new(vec![]) };
     static PINNED: RefCell<Vec<Retained<NSTabViewItem>>> = const { RefCell::new(vec![]) };
 }
 
@@ -268,6 +269,31 @@ fn draw_pin(pinned: bool, x: f64) {
     }
 }
 
+// The "Tab color N" (or "Tab color dark mode N") WidgetStyle of the Global Styles.
+fn tab_colour(n: usize) -> Option<Retained<NSColor>> {
+    let name = if crate::styler::dark() {
+        format!("Tab color dark mode {}", n + 1)
+    } else {
+        format!("Tab color {}", n + 1)
+    };
+    let bgr = crate::styler::cfg()
+        .global_styles
+        .iter()
+        .find(|s| s.name == name)?
+        .bg?;
+    let c = |k: isize| ((bgr >> k) & 0xFF) as f64 / 255.;
+    Some(rgb(c(0), c(8), c(16)))
+}
+
+// View > Tab and tab menu items: Apply Color 1 to 5 (tags 0 to 4) and Remove Color (tag 5).
+pub fn colour_items(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<NSMenuItem>> {
+    (0..5)
+        .map(|k| (format!("Apply Color {}", k + 1), k))
+        .chain(std::iter::once(("Remove Color".to_string(), 5)))
+        .map(|(n, k)| crate::tagged(mtm, &n, sel!(tabColour:), k, t))
+        .collect()
+}
+
 fn state_color(s: State) -> Retained<NSColor> {
     match s {
         State::Saved => rgb(0.2, 0.45, 0.85),
@@ -321,31 +347,31 @@ impl TabBar {
         usize::try_from(tv.indexOfTabViewItem(&s)).ok()
     }
 
-    fn labels(&self) -> Vec<(String, State, bool)> {
+    fn labels(&self) -> Vec<(String, State, bool, Option<usize>)> {
         let items = self.items();
         let app = app(self.mtm());
         items
             .iter()
             .map(|it| match &app {
                 Some(a) => a.tab_bar_info(it),
-                None => (it.label().to_string(), State::Saved, false),
+                None => (it.label().to_string(), State::Saved, false, None),
             })
             .collect()
     }
 
-    fn widths(&self, labels: &[(String, State, bool)]) -> Vec<f64> {
+    fn widths(&self, labels: &[(String, State, bool, Option<usize>)]) -> Vec<f64> {
         let a = attrs(&NSColor::labelColor());
         let o = opts();
         labels
             .iter()
-            .map(|(l, _, _)| {
+            .map(|(l, _, _, _)| {
                 let w = unsafe { NSString::from_str(l).sizeWithAttributes(Some(&a)) }.width;
                 tab_width(w.ceil(), o.close, o.pin)
             })
             .collect()
     }
 
-    fn relayout(&self, labels: &[(String, State, bool)]) -> Vec<Slot> {
+    fn relayout(&self, labels: &[(String, State, bool, Option<usize>)]) -> Vec<Slot> {
         let ws = self.widths(labels);
         let width = self.bounds().size.width;
         let mut first = self.ivars().first.get();
@@ -379,14 +405,21 @@ impl TabBar {
         let sel = self.selected();
         let focused = self.is_active_view();
         for s in &slots {
-            let Some((label, state, pinned)) = labels.get(s.i) else {
+            let Some((label, state, pinned, colour)) = labels.get(s.i) else {
                 continue;
             };
             let r = NSRect::new(NSPoint::new(s.x, 0.), NSSize::new(s.w, BAR_H));
             let active = sel == Some(s.i);
-            if active {
-                NSColor::controlBackgroundColor().set();
+            let tint = colour.and_then(tab_colour);
+            if let Some(c) = &tint {
+                c.set();
                 NSBezierPath::fillRect(r);
+            }
+            if active {
+                if tint.is_none() {
+                    NSColor::controlBackgroundColor().set();
+                    NSBezierPath::fillRect(r);
+                }
                 if o.top_bar {
                     if focused {
                         rgb(250. / 255., 170. / 255., 60. / 255.).set();
@@ -395,7 +428,7 @@ impl TabBar {
                     }
                     NSBezierPath::fillRect(NSRect::new(r.origin, NSSize::new(s.w, TOP_BAR)));
                 }
-            } else if o.inactive {
+            } else if o.inactive && tint.is_none() {
                 NSColor::systemGrayColor()
                     .colorWithAlphaComponent(0.15)
                     .set();
@@ -597,7 +630,7 @@ impl TabBar {
             .iter()
             .zip(ax.iter())
             .filter_map(|(s, el)| {
-                let (l, _, _) = labels.get(s.i)?;
+                let (l, _, _, _) = labels.get(s.i)?;
                 let r = NSRect::new(NSPoint::new(s.x, 0.), NSSize::new(s.w, BAR_H));
                 el.setAccessibilityTitle(Some(&NSString::from_str(l)));
                 unsafe {
@@ -615,7 +648,7 @@ impl TabBar {
 
 impl App {
     // The tab label without the modified mark, and the DocTabView.cpp image state.
-    pub(crate) fn tab_bar_info(&self, item: &NSTabViewItem) -> (String, State, bool) {
+    pub(crate) fn tab_bar_info(&self, item: &NSTabViewItem) -> (String, State, bool, Option<usize>) {
         let pinned = self.item_pinned(item);
         let t = self
             .ivars()
@@ -625,7 +658,7 @@ impl App {
             .find(|t| std::ptr::eq(&*t.item, item))
             .cloned();
         let Some(t) = t else {
-            return (item.label().to_string(), State::Saved, pinned);
+            return (item.label().to_string(), State::Saved, pinned, None);
         };
         let state = if self.monitored(item) {
             State::Monitoring
@@ -636,7 +669,7 @@ impl App {
         } else {
             State::Saved
         };
-        (item.label().to_string(), state, pinned)
+        (item.label().to_string(), state, pinned, self.colour_of(item))
     }
 
     // Buffer::isPinned: a tab is pinned when it or a clone of it is pinned.
@@ -683,6 +716,41 @@ impl App {
         self.tab_bars_redraw();
     }
 
+    fn colour_of(&self, item: &NSTabViewItem) -> Option<usize> {
+        let i = self
+            .ivars()
+            .tabs
+            .borrow()
+            .iter()
+            .position(|t| std::ptr::eq(&*t.item, item))?;
+        let items = self.with_clones(i);
+        COLOURS.with(|c| {
+            c.borrow()
+                .iter()
+                .find(|(x, _)| items.iter().any(|it| std::ptr::eq(&**x, &**it)))
+                .map(|(_, n)| *n)
+        })
+    }
+
+    // NppCommands.cpp IDM_VIEW_TAB_COLOUR_NONE to _5: the colour goes to the document, so its clones get it too.
+    pub(crate) fn set_tab_colour(&self, tag: isize) {
+        let Some(i) = self.current() else { return };
+        let items = self.with_clones(i);
+        let tabs: Vec<Retained<NSTabViewItem>> =
+            self.ivars().tabs.borrow().iter().map(|t| t.item.clone()).collect();
+        COLOURS.with(|c| {
+            let mut c = c.borrow_mut();
+            c.retain(|(x, _)| {
+                tabs.iter().any(|t| std::ptr::eq(&**t, &**x))
+                    && !items.iter().any(|it| std::ptr::eq(&**x, &**it))
+            });
+            if let (Ok(n @ 0..=4), Some(it)) = (usize::try_from(tag), items.first()) {
+                c.push((it.clone(), n));
+            }
+        });
+        self.tab_bars_redraw();
+    }
+
     // NppIO.cpp fileCloseAllButPinned.
     pub(crate) fn close_all_but_pinned(&self) {
         let n = self.ivars().tabs.borrow().len();
@@ -702,6 +770,8 @@ impl App {
             let pinned = self.current().is_some_and(|i| self.pinned_at(i));
             item.setTitle(&NSString::from_str(if pinned { "Unpin Tab" } else { "Pin Tab" }));
             Some(opts().pin && self.current().is_some())
+        } else if a == sel!(tabColour:) {
+            Some(self.current().is_some())
         } else if a == sel!(closeAllButPinned:) {
             Some(self.current().is_some())
         } else {
@@ -852,6 +922,18 @@ mod tests {
         assert_eq!(moved_to(2, 0), 0);
         assert_eq!(moved_to(1, 1), 1);
         assert_eq!(moved_to(1, 2), 1);
+    }
+
+    #[test]
+    fn tab_colours_from_stylers() {
+        let c = tab_colour(0).unwrap();
+        let hex = |v: f64| (v * 255.).round() as u8;
+        assert_eq!(
+            (hex(c.redComponent()), hex(c.greenComponent()), hex(c.blueComponent())),
+            (0xF3, 0xF0, 0xCB)
+        );
+        assert!(tab_colour(4).is_some());
+        assert!(tab_colour(5).is_none());
     }
 
     #[test]
