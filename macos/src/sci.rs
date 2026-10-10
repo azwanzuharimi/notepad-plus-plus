@@ -587,3 +587,22 @@ pub fn reset_change_history(v: &NSView) {
     send(v, SCI_SETCHANGEHISTORY, 0, 0);
     send(v, SCI_SETCHANGEHISTORY, flags as usize, 0);
 }
+
+// Multiple and rectangular selection settings as Notepad_plus::init sets them; Option+drag makes a rectangle, Cmd+click adds a caret.
+pub fn setup_multi_selection(v: &NSView) {
+    const SCI_SETMULTIPLESELECTION: u32 = 2563;
+    const SCI_SETADDITIONALSELECTIONTYPING: u32 = 2565;
+    const SCI_SETVIRTUALSPACEOPTIONS: u32 = 2596;
+    const SCI_SETMULTIPASTE: u32 = 2614;
+    const SCI_AUTOCSETMULTI: u32 = 2636;
+    const SCI_SETMOUSESELECTIONRECTANGULARSWITCH: u32 = 2668;
+    const SCVS_RECTANGULARSELECTION: usize = 1;
+    const SC_MULTIPASTE_EACH: usize = 1;
+    const SC_MULTIAUTOC_EACH: usize = 1;
+    send(v, SCI_SETMULTIPLESELECTION, 1, 0);
+    send(v, SCI_SETADDITIONALSELECTIONTYPING, 1, 0);
+    send(v, SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION, 0);
+    send(v, SCI_SETMULTIPASTE, SC_MULTIPASTE_EACH, 0);
+    send(v, SCI_AUTOCSETMULTI, SC_MULTIAUTOC_EACH, 0);
+    send(v, SCI_SETMOUSESELECTIONRECTANGULARSWITCH, 1, 0);
+}

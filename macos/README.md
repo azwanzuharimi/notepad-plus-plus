@@ -8,6 +8,16 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (multi-select and column mode):
+
+- Edit menu: Multi-select All and Multi-select Next (4 items each), Undo the Latest Added Multi-Select, Skip Current & Go to Next Multi-select, Column Mode..., and Column Editor... (Cmd+Opt+C, Alt+C in Notepad++).
+- Editors use the Notepad++ settings: multiple selection, typing in all selections, paste into each selection, and virtual space in rectangular selections.
+- Rectangular selection: Option+drag or Option+Shift+arrow keys (Alt in Notepad++). Scintilla on macOS does not support another modifier. Cmd+click adds a caret, and Cmd+drag adds a selection (Ctrl in Notepad++).
+- The Column / Multi-Selection Editor has Text to Insert and Number to Insert (initial number, increase, repeat, leading none, zeros, or spaces, and Dec, Hex with a-f or A-F, Oct, Bin). Without a rectangular or multiple selection, it inserts at the caret column on each line from the caret line to the end, as in Notepad++. Each insert is one undo step. A read-only tab does not change.
+- Negative numbers wrap to large numbers, as in Notepad++. A negative Repeat inserts the initial number on each line; Notepad++ stops responding in that case without a selection.
+- The Column Editor settings are kept until the app quits, not saved. OK is not disabled when the text is empty; it does nothing. An invalid number shows an alert, not a balloon tip.
+- Not done: the Notepad++ Delete key fix for multiple carets at line ends, and the "column selection to multi-editing" key handling. There is no Character Panel or Clipboard History.
+
 2026-10-10 (Search menu):
 
 - Search menu in the Notepad++ order: Select and Find Next/Previous, Find (Volatile) Next/Previous, Search Results Window, Next/Previous Search Result, Go to Matching Brace, Select All In-between {} [] or (), Change History, and Bookmark.

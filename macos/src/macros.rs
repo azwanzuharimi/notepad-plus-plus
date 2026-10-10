@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 14] = [
+const NOT_RECORDED: [&str; 18] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -60,6 +60,10 @@ const NOT_RECORDED: [&str; 14] = [
     "IDM_SEARCH_CHANGED_NEXT",
     "IDM_SEARCH_CHANGED_PREV",
     "IDM_SEARCH_CLEAR_CHANGE_HISTORY",
+    "IDM_EDIT_MULTISELECTALL",
+    "IDM_EDIT_MULTISELECTALLMATCHCASE",
+    "IDM_EDIT_COLUMNMODE",
+    "IDM_EDIT_COLUMNMODETIP",
 ];
 
 struct Cmd {
@@ -230,6 +234,23 @@ fn menu_cmds() -> Vec<Cmd> {
             n as isize,
         ));
     }
+    let multi = [
+        "ALL",
+        "ALLMATCHCASE",
+        "ALLWHOLEWORD",
+        "ALLMATCHCASEWHOLEWORD",
+        "NEXT",
+        "NEXTMATCHCASE",
+        "NEXTWHOLEWORD",
+        "NEXTMATCHCASEWHOLEWORD",
+        "UNDO",
+        "SSKIP",
+    ];
+    for (k, n) in multi.into_iter().enumerate() {
+        v.push((format!("IDM_EDIT_MULTISELECT{n}"), 42090 + k as i32, "multiSelect:", k as isize));
+    }
+    v.push(("IDM_EDIT_COLUMNMODE".into(), 42034, "columnEditor:", -1));
+    v.push(("IDM_EDIT_COLUMNMODETIP".into(), 42037, "columnModeTip:", -1));
     for n in 0..9 {
         v.push((
             format!("IDM_VIEW_TAB{}", n + 1),
@@ -1061,6 +1082,7 @@ mod tests {
             include_str!("edit.rs"),
             include_str!("search_extras.rs"),
             include_str!("language.rs"),
+            include_str!("column.rs"),
         ]
         .concat();
         let table = menu_cmds();

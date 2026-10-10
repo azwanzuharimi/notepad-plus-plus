@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod comment;
+mod column;
 mod config;
 mod edit;
 mod encoding;
@@ -825,6 +826,38 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(multiSelect:))]
+        fn multi_select_action(&self, s: Option<&AnyObject>) {
+            self.multi_select(s.map_or(0, |s| unsafe { msg_send![s, tag] }));
+        }
+
+        #[unsafe(method(columnModeTip:))]
+        fn column_mode_tip_action(&self, _s: Option<&AnyObject>) {
+            self.column_mode_tip();
+        }
+
+        #[unsafe(method(columnEditor:))]
+        fn column_editor_action(&self, _s: Option<&AnyObject>) {
+            self.show_column_editor();
+        }
+
+        #[unsafe(method(columnChoice:))]
+        fn column_choice_action(&self, _s: Option<&AnyObject>) {
+            self.column_choice();
+        }
+
+        #[unsafe(method(columnFormat:))]
+        fn column_format_action(&self, _s: Option<&AnyObject>) {
+            self.column_format();
+        }
+
+        #[unsafe(method(columnOk:))]
+        fn column_ok_action(&self, _s: Option<&AnyObject>) {
+            self.column_ok();
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -1296,6 +1329,7 @@ impl App {
         self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()));
         sci::setup_bookmark_margin(&view, cfg());
         sci::setup_change_history(&view, cfg());
+        sci::setup_multi_selection(&view);
         let name = match &path {
             Some(p) => p
                 .file_name()
