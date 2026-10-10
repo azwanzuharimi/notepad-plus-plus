@@ -8,6 +8,16 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Find dialog with tabs):
+
+- Find..., Replace..., Find in Files..., and Mark... open one dialog with the Notepad++ tabs: Find, Replace, Find in Files, Find in Projects, and Mark. The window title is the tab name. Each tab shows the controls and the button column of `FindReplaceDlg.rc`; Find what, Replace with, and the options stay when the tab changes.
+- New buttons: Find All in Current Document, Find All in All Opened Documents (the hits go to the search results, the dialog closes when there are hits), and Replace All in All Opened Documents (with the Notepad++ "Are you sure?" question; read-only tabs are skipped; the tabs are not saved).
+- New options: Backward direction, In selection (Count, Replace All, Mark All, Find All in Current Document), the 2 find buttons mode (▲ and ▼ Find Next), the "<<" button that fills Directory from the active document, the filter tip "(?)", and Transparency (On losing focus or Always, with the slider, through the window alpha). In Regular expression mode, Match whole word only and Backward direction are off, as in Notepad++.
+- The status bar of the dialog shows one line in the "Find status" colours of the theme (red, blue, green), with the reason text as its tooltip. In dark appearance the colours are lighter, as `HLSColour::toRGB4DarkMod` makes them.
+- Find what, Replace with, Filters, and Directory are combo boxes with their history. The history and the options are saved in `<FindHistory>` of `config.xml` with the Notepad++ attributes and limits (`nbMaxFindHistory*`, at most 30, or 20 for filters).
+- A macro records Find Next, Replace, and Replace All of the dialog as type 3 steps (`saveInMacro`).
+- Find in Projects is greyed until a project panel is open. The Project Panels slice adds its search.
+- Not done: the swap button (⇅), the reduced dialog mode, "Find dialog remains open after search" and the confirm option (Notepad++ defaults are used), Count, Find All, Mark All, and Clear all marks in macros, two line titles of the tall buttons (the full title is the tooltip), and translation of the tab names and the status texts.
 2026-10-10 (Toolbar):
 
 - The window has the Notepad++ toolbar, as a macOS toolbar below the title bar. The buttons and separators are in the Notepad++ order. Each button sends its menu command, so it is enabled, disabled, and checked as the menu item is, and a macro records it as the menu command.
@@ -146,7 +156,7 @@ Not affiliated with the Notepad++ project.
 
 2026-10-10 (Mark, token styles, Window menu):
 
-- Search > Mark... (Cmd+Shift+M, because Cmd+M minimizes on macOS) opens a Mark panel: Find what, Bookmark line, Purge for each search, Match whole word only, Match case, Wrap around, In selection, Search Mode, Mark All, Clear all marks, and Copy Marked Text. Marks use the "Find Mark Style" colour (indicator 31). There is no Backward direction option.
+- Search > Mark... (Cmd+Shift+M, because Cmd+M minimizes on macOS) opens a Mark panel: Find what, Bookmark line, Purge for each search, Match whole word only, Match case, Wrap around, In selection, Search Mode, Mark All, Clear all marks, and Copy Marked Text. Marks use the "Find Mark Style" colour (indicator 31).
 - Search menu: Style All Occurrences of Token, Style One Token, Clear Style, Jump Up, Jump Down, and Copy Styled Text, with the "Mark Style 1" to "Mark Style 5" colours. Style All uses whole word and no match case, as in Notepad++. Jump Down is Ctrl+1..5 and Ctrl+0 as in Notepad++. Jump Up is Ctrl+Opt (not Ctrl+Shift), because AppKit does not match Shift with a digit.
 - Smart highlighting is on, as in Notepad++: when a whole word is selected, its other occurrences in the visible lines get the "Smart Highlighting" colour (whole word, no match case; Preferences > Highlighting changes this). It runs 50 ms after the last screen update. There is no Highlight matching tags for XML and HTML.
 - Window menu: Sort By (10 orders), Windows..., and the open documents (up to 40, as in Notepad++) with a check on the active tab. The Windows dialog has the Name, Path, Type, Size, and Modified time columns. A click on a column header sorts the list, and a second click reverses it. Activate, Save, Close window(s), Sort tabs, and OK work as in Notepad++. Sort tabs without a column click sorts by name first. Cancel in Close window(s) keeps that document and goes on with the next one.
@@ -203,7 +213,7 @@ Not affiliated with the Notepad++ project.
 - No Text Direction RTL or LTR: Scintilla on macOS stores `SC_BIDIRECTIONAL_R2L` but does not draw right to left. No Post-It, Distraction Free Mode, View Current File in, Hide Lines, or Monitoring.
 - Summary counts characters in UTF-8 for all encodings. Notepad++ uses a byte count for ANSI and UTF-16 files. Pinch zoom changes only the current tab.
 - Macro menu: Start Recording and Stop Recording (Cmd+Shift+R), Playback (Cmd+Shift+P), Save Current Recorded Macro..., Run a Macro Multiple Times..., and the saved macros. A playback is one undo action for each document.
-- Reload from Disk is recorded as one command, not as the text of the file. Recording keeps the Scintilla steps and the menu commands that Notepad++ records as type 2 steps (for example New, Save, Close All, Undo, the Line Operations, Convert Case, Blank Operations, Comment/Uncomment, Insert Date Time, bookmarks, Find Next, Word wrap, fold, tab, and EOL commands). Such a command is recorded as one step: the Scintilla steps that it sends are not kept. Notepad++ keeps both. Steps from the Find dialog buttons are not recorded, but Find Next, Replace, and Replace All steps (type 3) from Notepad++ macros play back.
+- Reload from Disk is recorded as one command, not as the text of the file. Recording keeps the Scintilla steps and the menu commands that Notepad++ records as type 2 steps (for example New, Save, Close All, Undo, the Line Operations, Convert Case, Blank Operations, Comment/Uncomment, Insert Date Time, bookmarks, Find Next, Word wrap, fold, tab, and EOL commands). Such a command is recorded as one step: the Scintilla steps that it sends are not kept. Notepad++ keeps both. Find Next, Replace, and Replace All of the Find dialog are recorded as type 3 steps and play back.
 - Run menu: Run... (F5) with the Notepad++ variables (the + button), Save..., and the saved commands. A command runs with `/bin/sh -c` in the folder of the active file (the home folder for a new file). The app does not put variable values in the command text. It gives each value to the shell in an environment variable (`$(FILE_NAME)` becomes `"${NPP_FILE_NAME}"`), so a file name or a selected word cannot run as a command. Windows `%VAR%` expansion is not done; the shell expands `$VAR`. As in Notepad++, `$(CURRENT_LINE)` and `$(CURRENT_COLUMN)` start at 0.
 - Macros and commands are saved in `~/Library/Application Support/notepadpp-mac/shortcuts.xml`, in the Notepad++ `<Macros>` and `<UserDefinedCommands>` format. You can copy them from a Notepad++ `shortcuts.xml`. A save keeps the other parts of the file. If the app cannot read the file, it shows an alert and does not change the file.
 - The default commands are "Get PHP help" and "Wikipedia Search" with `open`. The default macro "Trim Trailing Space and Save" is the Notepad++ one. The Windows default command is not included. The keys in shortcuts.xml are kept, but they do not work: there is no Shortcut Mapper, no Modify Shortcut/Delete Macro, and no Validate shortcuts.xml.
@@ -226,7 +236,7 @@ Not affiliated with the Notepad++ project.
 
 - Search menu: Find, Replace, Find Next, Find Previous, Find in Files, and Go to Line.
 - Find and Replace use the Notepad++ Boost regex engine (`boostregex/`), built into Scintilla with `SCI_OWNREGEX`.
-- One Find panel holds both the Find and the Replace fields. There is no Mark tab, no search history, and no "In selection" or "Backward direction" option.
+- One Find panel holds both the Find and the Replace fields (a tabbed dialog since a later slice).
 - Find in Files searches the text of a tab for a file that is open, also when the tab has unsaved changes. For other files it reads the disk copy. It skips files that contain a NUL byte, but not UTF-16 files with a BOM.
 - Replace in Files replaces in the tab for a file that is open, as one undo step, and then saves the tab, as Notepad++ does (the save also writes the other unsaved changes of that tab). It writes other files on disk. A read only tab is not changed, and the status line names it.
 - The Search results panel folds: a new search collapses the old search blocks, a double-click on a header line folds or unfolds it, and the fold margin uses the Notepad++ plus and minus markers.

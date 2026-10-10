@@ -473,8 +473,8 @@ impl App {
                 if s.is_empty() || s.chars().count() > FILL_FINDWHAT_THRESHOLD {
                     return;
                 }
-                let c = &self.find_ui().c;
-                c.find.setStringValue(&ns(&s));
+                let c = self.find_ui();
+                c.set_find_text(&s);
                 let o = Opts {
                     find: s,
                     mode: Mode::Normal,

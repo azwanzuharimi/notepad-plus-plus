@@ -601,6 +601,13 @@ fn switch_to(file: &str) -> Result<(), String> {
 }
 
 // The text of a menu item before translation.
+// Translates a dialog again after its title changes, for example on a Find dialog tab switch.
+pub fn retranslate(w: &NSWindow) {
+    if translating() {
+        with(|s| s.window(w));
+    }
+}
+
 pub fn english_title(i: &NSMenuItem) -> String {
     let cur = i.title().to_string();
     S.with(|s| {

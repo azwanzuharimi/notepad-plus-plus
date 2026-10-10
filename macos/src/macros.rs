@@ -31,11 +31,12 @@ const IDC_FRCOMMAND_BOOLEANS: i32 = 1702;
 const IDFINDWHAT: i32 = 1601;
 const IDREPLACEWITH: i32 = 1602;
 const IDNORMAL: i32 = 1625;
-const IDOK: isize = 1;
-const IDREPLACE: isize = 1608;
-const IDREPLACEALL: isize = 1609;
-const IDC_FINDPREV: isize = 1721;
-const IDC_FINDNEXT: isize = 1723;
+pub const IDOK: isize = 1;
+pub const IDREPLACE: isize = 1608;
+pub const IDREPLACEALL: isize = 1609;
+pub const IDC_FINDPREV: isize = 1721;
+pub const IDC_FINDNEXT: isize = 1723;
+const IDF_IN_SELECTION_CHECK: isize = 128;
 const IDF_WHOLEWORD: isize = 1;
 const IDF_MATCHCASE: isize = 2;
 const IDF_WRAP: isize = 256;
@@ -193,14 +194,24 @@ fn menu_cmds() -> Vec<Cmd> {
         ),
         ("IDM_EDIT_INSERT_DATETIME_LONG", 42085, "insertDateTime:", 1),
         ("IDM_EDIT_AUTOCOMPLETE", 50000, "autoComplete:", 0),
-        ("IDM_EDIT_AUTOCOMPLETE_CURRENTFILE", 50001, "autoComplete:", 1),
+        (
+            "IDM_EDIT_AUTOCOMPLETE_CURRENTFILE",
+            50001,
+            "autoComplete:",
+            1,
+        ),
         ("IDM_EDIT_FUNCCALLTIP", 50002, "autoComplete:", 2),
         ("IDM_EDIT_FUNCCALLTIP_PREVIOUS", 50010, "autoComplete:", 3),
         ("IDM_EDIT_FUNCCALLTIP_NEXT", 50011, "autoComplete:", 4),
         ("IDM_EDIT_AUTOCOMPLETE_PATH", 50006, "autoComplete:", 5),
         ("IDM_SEARCH_FINDNEXT", 43002, "findNext:", -1),
         ("IDM_SEARCH_FINDPREV", 43010, "findPrevious:", -1),
-        ("IDM_SEARCH_FINDINCREMENT", 43011, "showIncrementalSearch:", -1),
+        (
+            "IDM_SEARCH_FINDINCREMENT",
+            43011,
+            "showIncrementalSearch:",
+            -1,
+        ),
         ("IDM_SEARCH_SETANDFINDNEXT", 43048, "searchCmd:", 0),
         ("IDM_SEARCH_SETANDFINDPREV", 43049, "searchCmd:", 1),
         ("IDM_SEARCH_VOLATILE_FINDNEXT", 43014, "searchCmd:", 2),
@@ -233,11 +244,31 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_VIEW_MONITORING", 44097, "monitoring:", -1),
         ("IDM_SETTING_EDITCONTEXTMENU", 48018, "editContextMenu:", -1),
         ("IDM_VIEW_DOC_MAP", 44080, "toggleDocMap:", -1),
-        ("IDM_VIEW_FILEBROWSER", 44085, "toggleFolderAsWorkspace:", -1),
-        ("IDM_FILE_OPENFOLDERASWORKSPACE", 41022, "openFolderAsWorkspace:", -1),
-        ("IDM_FILE_CONTAININGFOLDERASWORKSPACE", 41025, "containingFolderAsWorkspace:", -1),
+        (
+            "IDM_VIEW_FILEBROWSER",
+            44085,
+            "toggleFolderAsWorkspace:",
+            -1,
+        ),
+        (
+            "IDM_FILE_OPENFOLDERASWORKSPACE",
+            41022,
+            "openFolderAsWorkspace:",
+            -1,
+        ),
+        (
+            "IDM_FILE_CONTAININGFOLDERASWORKSPACE",
+            41025,
+            "containingFolderAsWorkspace:",
+            -1,
+        ),
         ("IDM_EDIT_CHAR_PANEL", 42051, "toggleCharPanel:", -1),
-        ("IDM_EDIT_CLIPBOARDHISTORY_PANEL", 42052, "toggleClipboardHistory:", -1),
+        (
+            "IDM_EDIT_CLIPBOARDHISTORY_PANEL",
+            42052,
+            "toggleClipboardHistory:",
+            -1,
+        ),
         (
             "IDM_VIEW_WRAP",
             44022,
@@ -265,7 +296,12 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_FORMAT_TOUNIX", 45002, "eolConvert:", 2),
         ("IDM_FORMAT_TOMAC", 45003, "eolConvert:", 1),
         ("IDM_LANGSTYLE_CONFIG_DLG", 46001, "styleConfigurator:", -1),
-        ("IDM_SETTING_IMPORTSTYLETHEMES", 48006, "importStyleThemes:", -1),
+        (
+            "IDM_SETTING_IMPORTSTYLETHEMES",
+            48006,
+            "importStyleThemes:",
+            -1,
+        ),
     ]
     .into_iter()
     .map(|(n, i, a, t)| (n.to_string(), i, a, t))
@@ -329,7 +365,12 @@ fn menu_cmds() -> Vec<Cmd> {
         "SSKIP",
     ];
     for (k, n) in multi.into_iter().enumerate() {
-        v.push((format!("IDM_EDIT_MULTISELECT{n}"), 42090 + k as i32, "multiSelect:", k as isize));
+        v.push((
+            format!("IDM_EDIT_MULTISELECT{n}"),
+            42090 + k as i32,
+            "multiSelect:",
+            k as isize,
+        ));
     }
     v.push(("IDM_EDIT_SORTLINES_RANDOMLY".into(), 42078, "editOp:", 12));
     v.push(("IDM_EDIT_SORTLINES_LOCALE_ASCENDING".into(), 42100, "sortLocale:", 0));
@@ -363,12 +404,42 @@ fn menu_cmds() -> Vec<Cmd> {
     v.push(("IDM_SEARCH_MARK".into(), 43054, "showMark:", -1));
     for k in 0..5 {
         let (n, t) = (k + 1, k as isize);
-        v.push((format!("IDM_SEARCH_MARKALLEXT{n}"), 43022 + 2 * k, "markCmd:", t));
-        v.push((format!("IDM_SEARCH_MARKONEEXT{n}"), 43062 + k, "markCmd:", 10 + t));
-        v.push((format!("IDM_SEARCH_UNMARKALLEXT{n}"), 43023 + 2 * k, "markCmd:", 20 + t));
-        v.push((format!("IDM_SEARCH_GOPREVMARKER{n}"), 43033 + k, "markCmd:", 30 + t));
-        v.push((format!("IDM_SEARCH_GONEXTMARKER{n}"), 43039 + k, "markCmd:", 40 + t));
-        v.push((format!("IDM_SEARCH_STYLE{n}TOCLIP"), 43055 + k, "markCmd:", 50 + t));
+        v.push((
+            format!("IDM_SEARCH_MARKALLEXT{n}"),
+            43022 + 2 * k,
+            "markCmd:",
+            t,
+        ));
+        v.push((
+            format!("IDM_SEARCH_MARKONEEXT{n}"),
+            43062 + k,
+            "markCmd:",
+            10 + t,
+        ));
+        v.push((
+            format!("IDM_SEARCH_UNMARKALLEXT{n}"),
+            43023 + 2 * k,
+            "markCmd:",
+            20 + t,
+        ));
+        v.push((
+            format!("IDM_SEARCH_GOPREVMARKER{n}"),
+            43033 + k,
+            "markCmd:",
+            30 + t,
+        ));
+        v.push((
+            format!("IDM_SEARCH_GONEXTMARKER{n}"),
+            43039 + k,
+            "markCmd:",
+            40 + t,
+        ));
+        v.push((
+            format!("IDM_SEARCH_STYLE{n}TOCLIP"),
+            43055 + k,
+            "markCmd:",
+            50 + t,
+        ));
     }
     v.push(("IDM_SEARCH_CLEARALLMARKS".into(), 43032, "markCmd:", 25));
     v.push(("IDM_SEARCH_GOPREVMARKER_DEF".into(), 43038, "markCmd:", 36));
@@ -378,13 +449,26 @@ fn menu_cmds() -> Vec<Cmd> {
     v.push(("IDM_LANG_USER".into(), 46180, "userDefined:", -1));
     v.push(("IDM_LANG_USER_DLG".into(), 46250, "defineUdl:", -1));
     v.push(("IDM_LANG_OPENUDLDIR".into(), 46300, "openUdlFolder:", -1));
-    v.push(("IDM_LANG_UDLCOLLECTION_PROJECT_SITE".into(), 46301, "udlCollection:", -1));
+    v.push((
+        "IDM_LANG_UDLCOLLECTION_PROJECT_SITE".into(),
+        46301,
+        "udlCollection:",
+        -1,
+    ));
     v.push(("IDM_WINDOW_WINDOWS".into(), 11001, "showWindows:", -1));
-    for (k, n) in ["FN_ASC", "FN_DSC", "FP_ASC", "FP_DSC", "FT_ASC", "FT_DSC", "FS_ASC", "FS_DSC", "FD_ASC", "FD_DSC"]
-        .into_iter()
-        .enumerate()
+    for (k, n) in [
+        "FN_ASC", "FN_DSC", "FP_ASC", "FP_DSC", "FT_ASC", "FT_DSC", "FS_ASC", "FS_DSC", "FD_ASC",
+        "FD_DSC",
+    ]
+    .into_iter()
+    .enumerate()
     {
-        v.push((format!("IDM_WINDOW_SORT_{n}"), 11002 + k as i32, "sortTabs:", k as isize));
+        v.push((
+            format!("IDM_WINDOW_SORT_{n}"),
+            11002 + k as i32,
+            "sortTabs:",
+            k as isize,
+        ));
     }
     v.into_iter()
         .map(|(name, id, action, tag)| Cmd {
@@ -470,6 +554,20 @@ struct SnR {
 }
 
 impl SnR {
+    // Keeps the value of a type 3 step; the command of an IDC_FRCOMMAND_EXEC step comes back.
+    fn take(&mut self, step: &Step) -> Option<isize> {
+        match step.message {
+            IDC_FRCOMMAND_INIT => *self = SnR::default(),
+            IDFINDWHAT => self.find = step.s.clone(),
+            IDREPLACEWITH => self.replace = step.s.clone(),
+            IDNORMAL => self.mode = step.l,
+            IDC_FRCOMMAND_BOOLEANS => self.flags = step.l,
+            IDC_FRCOMMAND_EXEC => return Some(step.l),
+            _ => {}
+        }
+        None
+    }
+
     fn opts(&self) -> Opts {
         Opts {
             find: self.find.clone(),
@@ -483,6 +581,8 @@ impl SnR {
                 _ => Mode::Normal,
             },
             dot_nl: self.flags & IDF_REDOTMATCHNL != 0,
+            in_sel: self.flags & IDF_IN_SELECTION_CHECK != 0,
+            backward: self.flags & IDF_WHICH_DIRECTION == 0,
         }
     }
 }
@@ -729,6 +829,37 @@ pub fn menus(mtm: MainThreadMarker, bar: &NSMenu, t: Option<&AnyObject>) {
     }
 }
 
+// FindReplaceDlg::saveInMacro for Find Next, Replace and Replace All: the type 3 steps of the command.
+pub(crate) fn record_search(o: &Opts, cmd: isize, replace: bool) {
+    if !recording() {
+        return;
+    }
+    let steps = search_steps(o, cmd, replace);
+    S.with(|s| s.current.borrow_mut().extend(steps));
+}
+
+fn search_steps(o: &Opts, cmd: isize, replace: bool) -> Vec<Step> {
+    let flag = |on: bool, f: isize| if on { f } else { 0 };
+    let b = flag(o.whole_word, IDF_WHOLEWORD)
+        | flag(o.match_case, IDF_MATCHCASE)
+        | flag(o.dot_nl, IDF_REDOTMATCHNL)
+        | flag(o.in_sel, IDF_IN_SELECTION_CHECK)
+        | flag(o.wrap, IDF_WRAP)
+        | flag(!o.backward, IDF_WHICH_DIRECTION);
+    let int = |m: i32, l: isize| Step::new(TYPE_SNR, m, 0, l, "");
+    let mut steps = vec![
+        int(IDC_FRCOMMAND_INIT, 0),
+        Step::new(TYPE_SNR, IDFINDWHAT, 0, 0, &o.find),
+        int(IDNORMAL, o.mode as isize),
+    ];
+    if replace {
+        steps.push(Step::new(TYPE_SNR, IDREPLACEWITH, 0, 0, &o.replace));
+    }
+    steps.push(int(IDC_FRCOMMAND_BOOLEANS, b));
+    steps.push(int(IDC_FRCOMMAND_EXEC, cmd));
+    steps
+}
+
 pub(crate) fn recording() -> bool {
     S.with(|s| s.recording.get())
 }
@@ -871,39 +1002,30 @@ impl App {
 
     // Port of FindReplaceDlg::execSavedCommand for Find Next, Replace and Replace All.
     fn macro_search(&self, step: &Step, env: &mut SnR) {
-        match step.message {
-            IDC_FRCOMMAND_INIT => *env = SnR::default(),
-            IDFINDWHAT => env.find = step.s.clone(),
-            IDREPLACEWITH => env.replace = step.s.clone(),
-            IDNORMAL => env.mode = step.l,
-            IDC_FRCOMMAND_BOOLEANS => env.flags = step.l,
-            IDC_FRCOMMAND_EXEC => {
-                let Some(v) = self.editor() else { return };
-                let o = env.opts();
-                let up = match step.l {
-                    IDC_FINDNEXT => false,
-                    IDC_FINDPREV => true,
-                    _ => env.flags & IDF_WHICH_DIRECTION == 0,
-                };
-                if up && o.regex() {
-                    return;
+        let Some(cmd) = env.take(step) else { return };
+        let Some(v) = self.editor() else { return };
+        let o = env.opts();
+        let up = match cmd {
+            IDC_FINDNEXT => false,
+            IDC_FINDPREV => true,
+            _ => env.flags & IDF_WHICH_DIRECTION == 0,
+        };
+        if up && o.regex() {
+            return;
+        }
+        let doc = sci::doc(&v);
+        match cmd {
+            IDOK | IDC_FINDNEXT | IDC_FINDPREV => {
+                if let Ok(Some((m, _))) =
+                    search::find_next(&doc, &o, sci::selection(&v), up, Next::Find)
+                {
+                    sci::select(&v, m);
                 }
-                let doc = sci::doc(&v);
-                match step.l {
-                    IDOK | IDC_FINDNEXT | IDC_FINDPREV => {
-                        if let Ok(Some((m, _))) =
-                            search::find_next(&doc, &o, sci::selection(&v), up, Next::Find)
-                        {
-                            sci::select(&v, m);
-                        }
-                    }
-                    IDREPLACE if !o.find.is_empty() => _ = self.replace_once(&v, &o),
-                    IDREPLACEALL => {
-                        let start = if o.wrap { 0 } else { sci::selection(&v).0 };
-                        _ = search::replace_all(&doc, &o, (start, doc.len()));
-                    }
-                    _ => {}
-                }
+            }
+            IDREPLACE if !o.find.is_empty() => _ = self.replace_once(&v, &o),
+            IDREPLACEALL => {
+                let range = search::all_range(&o, sci::selection(&v), doc.len());
+                _ = search::replace_all(&doc, &o, range);
             }
             _ => {}
         }
@@ -1168,6 +1290,48 @@ mod tests {
             Some((b, o)) => b.parse().unwrap_or_else(|_| id_of(src, b)) + o.parse::<i32>().unwrap(),
             None => v.parse().unwrap(),
         }
+    }
+
+    #[test]
+    fn find_dialog_steps_play_back() {
+        let o = Opts {
+            find: "a(b)".into(),
+            replace: "x\\1".into(),
+            match_case: true,
+            wrap: true,
+            mode: Mode::Regex,
+            dot_nl: true,
+            in_sel: true,
+            ..Default::default()
+        };
+        let steps = search_steps(&o, IDREPLACEALL, true);
+        let ids: Vec<i32> = steps.iter().map(|s| s.message).collect();
+        assert_eq!(ids, [1700, 1601, 1625, 1602, 1702, 1701]);
+        assert!(steps.iter().all(|s| s.kind == TYPE_SNR));
+        assert_eq!(steps[4].l, 2 | 128 | 256 | 512 | 1024);
+        let mut env = SnR::default();
+        let cmds: Vec<isize> = steps.iter().filter_map(|s| env.take(s)).collect();
+        assert_eq!(cmds, [IDREPLACEALL]);
+        let back = env.opts();
+        assert_eq!(
+            (
+                back.find,
+                back.replace,
+                back.mode,
+                back.in_sel,
+                back.backward
+            ),
+            (o.find.clone(), o.replace.clone(), Mode::Regex, true, false)
+        );
+        let up = Opts {
+            backward: true,
+            ..o
+        };
+        let steps = search_steps(&up, IDOK, false);
+        assert_eq!(steps.len(), 5);
+        let mut env = SnR::default();
+        steps.iter().for_each(|s| _ = env.take(s));
+        assert!(env.opts().backward);
     }
 
     #[test]
