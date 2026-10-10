@@ -49,6 +49,11 @@ Not affiliated with the Notepad++ project.
 - The Search results panel also gets a fold margin, as in Notepad++.
 - No Text Direction RTL or LTR: Scintilla on macOS stores `SC_BIDIRECTIONAL_R2L` but does not draw right to left. No Post-It, Distraction Free Mode, View Current File in, Hide Lines, Synchronize scrolling, or Monitoring.
 - Summary counts characters in UTF-8 for all encodings. Notepad++ uses a byte count for ANSI and UTF-16 files. Pinch zoom changes only the current tab.
+- Macro menu: Start Recording and Stop Recording (Cmd+Shift+R), Playback (Cmd+Shift+P), Save Current Recorded Macro..., Run a Macro Multiple Times..., and the saved macros. A playback is one undo action for each document.
+- Recording keeps the Scintilla steps and the menu commands that Notepad++ records as type 2 steps (for example New, Save, Close All, Undo, Find Next, Word wrap, fold, tab, and EOL commands). Steps from the Find dialog buttons are not recorded, but Find Next, Replace, and Replace All steps (type 3) from Notepad++ macros play back.
+- Run menu: Run... (F5) with the Notepad++ variables (the + button), Save..., and the saved commands. A command runs with `/bin/sh -c` in the folder of the active file (the home folder for a new file). The app puts each variable value in shell quotes, so a file name cannot run as a command. As in Notepad++, `$(CURRENT_LINE)` and `$(CURRENT_COLUMN)` start at 0.
+- Macros and commands are saved in `~/Library/Application Support/notepadpp-mac/shortcuts.xml`, in the Notepad++ `<Macros>` and `<UserDefinedCommands>` format. You can copy them from a Notepad++ `shortcuts.xml`. A save keeps the other parts of the file.
+- The default commands are "Get PHP help" and "Wikipedia Search" with `open`. The Windows default command and the default macro are not included. The keys in shortcuts.xml are kept, but they do not work: there is no Shortcut Mapper, no Modify Shortcut/Delete Macro, and no Validate shortcuts.xml.
 
 2026-10-08:
 
