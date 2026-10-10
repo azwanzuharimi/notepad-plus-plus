@@ -22,6 +22,8 @@ pub struct Style {
     pub font_name: String,
     pub font_style: Option<u32>,
     pub font_size: Option<isize>,
+    pub keyword_class: String,
+    pub keywords: String,
 }
 
 #[derive(Debug, Default)]
@@ -62,6 +64,8 @@ fn style(e: &BytesStart) -> Style {
         font_name: attr(e, "fontName"),
         font_style: attr(e, "fontStyle").parse().ok(),
         font_size: attr(e, "fontSize").parse().ok(),
+        keyword_class: attr(e, "keywordClass"),
+        keywords: String::new(),
     }
 }
 
@@ -108,17 +112,34 @@ pub fn load() -> Config {
     }
     let mut r = Reader::from_str(STYLERS);
     let mut in_global = false;
+    let mut in_words = false;
     loop {
-        match r.read_event().expect("stylers.model.xml") {
+        let ev = r.read_event().expect("stylers.model.xml");
+        let start = matches!(ev, Event::Start(_));
+        let last = c.lexer_styles.last_mut().and_then(|(_, v)| v.last_mut());
+        match ev {
             Event::Start(e) if e.name().as_ref() == "LexerType" => {
                 c.lexer_styles.push((attr(&e, "name"), vec![]))
             }
             Event::Start(e) if e.name().as_ref() == "GlobalStyles" => in_global = true,
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == "WordsStyle" => {
+                in_words = start;
                 if let Some((_, v)) = c.lexer_styles.last_mut() {
                     v.push(style(&e));
                 }
             }
+            Event::Text(t) if in_words => {
+                if let Some(s) = last {
+                    s.keywords.push_str(&t.xml10_content());
+                }
+            }
+            Event::GeneralRef(g) if in_words => {
+                if let Some(s) = last {
+                    s.keywords
+                        .push_str(quick_xml::escape::resolve_predefined_entity(&g).unwrap_or(""));
+                }
+            }
+            Event::End(e) if e.name().as_ref() == "WordsStyle" => in_words = false,
             Event::Start(e) | Event::Empty(e)
                 if in_global && e.name().as_ref() == "WidgetStyle" =>
             {
@@ -179,6 +200,20 @@ mod tests {
         assert_eq!(get("vb").comment_line, "'");
         assert_eq!(get("batch").comment_line, "REM");
         assert!(get("normal").comment_line.is_empty());
+    }
+
+    #[test]
+    fn user_keywords_parsed() {
+        let c = load();
+        let styles = |n: &str| &c.lexer_styles.iter().find(|(l, _)| l == n).unwrap().1;
+        let attr = styles("html").iter().find(|s| s.id == 196).unwrap();
+        assert_eq!((attr.keyword_class.as_str(), attr.keywords.as_str()), ("substyle5", "download"));
+        let perl = styles("perl").iter().find(|s| s.id == 5).unwrap();
+        assert_eq!((perl.keyword_class.as_str(), perl.keywords.as_str()), ("instre1", "carp croak"));
+        let cpp = styles("cpp");
+        let user1 = cpp.iter().find(|s| s.id == 128).unwrap();
+        assert_eq!((user1.keyword_class.as_str(), user1.keywords.as_str()), ("substyle1", ""));
+        assert!(cpp.iter().find(|s| s.id == 11).unwrap().keyword_class.is_empty());
     }
 
     #[test]

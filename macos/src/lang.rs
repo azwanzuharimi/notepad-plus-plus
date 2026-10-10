@@ -167,6 +167,52 @@ fn words<'a>(cfg: &'a Config, lang: &str, class: &str) -> Option<&'a str> {
         .map(|(_, w)| w.as_str())
 }
 
+// ScintillaEditView::concatToBuildKeywordList: the styler user words, then the langs.model.xml words.
+fn user_and_lang_words(cfg: &Config, lang: &str, class: &str) -> String {
+    let user = cfg
+        .lexer_styles
+        .iter()
+        .find(|(n, _)| n == lang)
+        .and_then(|(_, v)| {
+            v.iter()
+                .rev()
+                .find(|s| s.keyword_class == class && !s.keywords.is_empty())
+        })
+        .map_or("", |s| s.keywords.as_str());
+    format!("{user} {}", words(cfg, lang, class).unwrap_or(""))
+}
+
+// ScintillaEditView::populateSubStyleKeywords calls: (base style, identifier list of each substyle).
+pub fn substyles(cfg: &Config, name: &str) -> Vec<(usize, Vec<String>)> {
+    let blocks: &[(&str, usize, usize, usize)] = match name {
+        "c" | "cpp" | "java" | "rc" | "cs" | "actionscript" | "swift" | "go" | "typescript" => {
+            &[(name, 11, 8, 1)]
+        }
+        "javascript" | "javascript.js" => &[("javascript.js", 11, 8, 1)],
+        "python" | "gdscript" => &[(name, 11, 8, 1)],
+        "lua" => &[(name, 11, 4, 1)],
+        "bash" => &[(name, 8, 4, 1), (name, 9, 4, 5)],
+        "xml" => &[(name, 3, 8, 1)],
+        "html" | "php" | "asp" | "jsp" => &[
+            ("html", 1, 4, 1),
+            ("html", 3, 4, 5),
+            ("javascript", 46, 8, 1),
+            ("php", 121, 8, 1),
+            ("asp", 74, 8, 1),
+        ],
+        _ => &[],
+    };
+    blocks
+        .iter()
+        .map(|&(lang, base, n, first)| {
+            let lists = (first..first + n)
+                .map(|k| user_and_lang_words(cfg, lang, &format!("substyle{k}")))
+                .collect();
+            (base, lists)
+        })
+        .collect()
+}
+
 // Mirrors ScintillaEditView.cpp lexer setup: keywords, stylers, properties and EOL fill per language (no fold properties).
 pub fn setup<'a>(cfg: &'a Config, name: &'a str) -> Setup<'a> {
     let pick = |list: &[(usize, &str, &str)]| -> Vec<(usize, &'a str)> {
@@ -432,6 +478,26 @@ mod tests {
             assert_eq!(s.stylers, ["html", "javascript", "php", "asp"]);
             assert!(s.props.contains(&("asp.default.language", "2")));
         }
+    }
+
+    #[test]
+    fn substyle_lists() {
+        let c = load();
+        let bases = |n: &str| -> Vec<(usize, usize)> {
+            substyles(&c, n).iter().map(|(b, l)| (*b, l.len())).collect()
+        };
+        for name in ["c", "cpp", "rc", "go", "javascript.js", "typescript", "python", "gdscript"] {
+            assert_eq!(bases(name), [(11, 8)], "{name}");
+        }
+        assert_eq!(bases("lua"), [(11, 4)]);
+        assert_eq!(bases("bash"), [(8, 4), (9, 4)]);
+        assert_eq!(bases("xml"), [(3, 8)]);
+        assert_eq!(bases("php"), [(1, 4), (3, 4), (46, 8), (121, 8), (74, 8)]);
+        assert!(bases("objc").is_empty() && bases("normal").is_empty());
+        let php = substyles(&c, "jsp");
+        assert!(php[1].1[0].starts_with("download "));
+        assert_eq!(php[3].1[5].split_whitespace().next(), Some("__class__"));
+        assert_eq!(substyles(&c, "cpp")[0].1[0], " ");
     }
 
     #[test]
