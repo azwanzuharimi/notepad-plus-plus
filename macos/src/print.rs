@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::{ns, prefs, run, sci, App};
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSBezierPath, NSButton, NSColor, NSFont, NSFontAttributeName, NSFontManager, NSFontTraitMask,
-    NSForegroundColorAttributeName, NSPopUpButton, NSPrintInfo, NSPrintOperation,
+    NSForegroundColorAttributeName, NSPopUpButton, NSPrintAllPages, NSPrintCopies, NSPrintInfo,
+    NSPrintJobSavingURL, NSPrintOperation, NSPrintSpoolJob,
     NSPrintPanelOptions, NSPrintingPaginationMode, NSStringDrawing, NSTextField, NSView,
 };
 use objc2_foundation::{
-    NSDate, NSDateFormatter, NSDateFormatterStyle, NSDictionary, NSPoint, NSRange, NSRect, NSSize,
+    NSDate, NSDateFormatter, NSDateFormatterStyle, NSDictionary, NSNumber, NSPoint, NSRange, NSRect, NSSize,
     NSString,
 };
 use std::cell::{Cell, RefCell};
@@ -70,7 +71,7 @@ pub struct Area {
     pub bottom: f64,
 }
 
-// Printer.cpp doPrint: user margins (mm) apply when one is set, but not less than the unprintable border; then the header and footer space.
+// Printer.cpp doPrint, from the printable origin: user margins (mm) apply when one is set, but not less than the unprintable border; then the header and footer space.
 pub fn text_area(
     paper: (f64, f64),
     border: [f64; 4],
@@ -87,10 +88,10 @@ pub fn text_area(
     }
     let marge = footer_line * 1.5;
     let mut a = Area {
-        left: m[0] + marge,
-        top: m[1] + marge,
-        right: paper.0 - m[2] - marge,
-        bottom: paper.1 - m[3] - marge,
+        left: m[0] - border[0] + marge,
+        top: m[1] - border[1] + marge,
+        right: paper.0 - m[2] - border[0] - marge,
+        bottom: paper.1 - m[3] - border[1] - marge,
     };
     if let Some(h) = header {
         a.top += h * 1.5;
@@ -225,7 +226,7 @@ pub struct Job {
     mm: [i64; 4],
     pages: RefCell<Vec<(usize, usize)>>,
     area: Cell<Area>,
-    paper: Cell<NSSize>,
+    page: Cell<NSSize>,
 }
 
 define_class!(
@@ -252,7 +253,7 @@ define_class!(
 
         #[unsafe(method(rectForPage:))]
         fn rect_for_page(&self, page: isize) -> NSRect {
-            let p = self.ivars().paper.get();
+            let p = self.ivars().page.get();
             NSRect::new(
                 NSPoint::new(0., (page.max(1) - 1) as f64 * p.height),
                 p,
@@ -274,14 +275,14 @@ fn format(
     gc: *mut c_void,
     draw: bool,
     a: Area,
-    paper: NSSize,
+    page: NSSize,
     r: (usize, usize),
 ) -> usize {
     let mut fr = RangeToFormat {
         hdc: gc,
         hdc_target: gc,
         rc: [a.left as i32, a.top as i32, a.right as i32, a.bottom as i32],
-        rc_page: [0, 0, paper.width as i32, paper.height as i32],
+        rc_page: [0, 0, page.width as i32, page.height as i32],
         chrg: [r.0 as isize, r.1 as isize],
     };
     sci::send(
@@ -322,6 +323,8 @@ impl PrintView {
             ib.origin.y,
         ]
         .map(|x| x.max(0.));
+        // AppKit puts each page rectangle at the printable origin, as a Windows printer DC does.
+        let page = ib.size;
         let area = text_area(
             (paper.width, paper.height),
             border,
@@ -338,7 +341,7 @@ impl PrintView {
             vec![]
         } else {
             let p = paginate(range, j.form_feeds.as_deref(), |a, b| {
-                format(&j.view, gc, false, area, paper, (a, b))
+                format(&j.view, gc, false, area, page, (a, b))
             });
             unsafe { CGContextRelease(gc) };
             p
@@ -346,8 +349,8 @@ impl PrintView {
         let n = pages.len();
         *j.pages.borrow_mut() = pages;
         j.area.set(area);
-        j.paper.set(paper);
-        self.setFrameSize(NSSize::new(paper.width, paper.height * n.max(1) as f64));
+        j.page.set(page);
+        self.setFrameSize(NSSize::new(page.width, page.height * n.max(1) as f64));
         n
     }
 
@@ -361,17 +364,17 @@ impl PrintView {
         if gc.is_null() {
             return;
         }
-        let (a, paper) = (j.area.get(), j.paper.get());
+        let (a, page) = (j.area.get(), j.page.get());
         unsafe {
             CGContextSaveGState(gc);
-            CGContextTranslateCTM(gc, 0., (n - 1) as f64 * paper.height);
+            CGContextTranslateCTM(gc, 0., (n - 1) as f64 * page.height);
         }
         // Text tops: the header ends half a line above the text, the footer starts half a line below it.
         if let Some(h) = &j.header {
             self.draw_part(h, n, a, a.top - h.height * 1.5, a.top - h.height / 4.);
         }
         if let Some(&r) = j.pages.borrow().get(n - 1) {
-            format(&j.view, gc, true, a, paper, r);
+            format(&j.view, gc, true, a, page, r);
         }
         if let Some(f) = &j.footer {
             self.draw_part(f, n, a, a.bottom + f.height / 2., a.bottom + f.height / 4.);
@@ -410,6 +413,10 @@ impl App {
         };
         let mtm = self.mtm();
         let v = tab.view.clone();
+        // Printer.cpp prints no page for an empty document.
+        if sci::length(&v) <= 0 {
+            return;
+        }
         let p = prefs::get();
         let (s, e) = sci::selection(&v);
         let sel = (s.max(0) as usize, e.max(0) as usize);
@@ -467,7 +474,7 @@ impl App {
             mm: [p.marge_left, p.marge_top, p.marge_right, p.marge_bottom],
             pages: RefCell::default(),
             area: Cell::default(),
-            paper: Cell::new(NSSize::new(0., 0.)),
+            page: Cell::new(NSSize::new(0., 0.)),
         };
         let info: Retained<NSPrintInfo> =
             unsafe { msg_send![&*NSPrintInfo::sharedPrintInfo(), copy] };
@@ -518,9 +525,17 @@ impl App {
         if !p.print_line_number {
             sci::send(&v, SCI_SETMARGINWIDTHN, margin, width);
         }
+        // Print Now keeps the printer and paper, but not the job choices of the last print.
         if ok && show_dialog {
             let used = op.printInfo();
             used.setSelectionOnly(false);
+            used.setJobDisposition(unsafe { NSPrintSpoolJob });
+            unsafe {
+                let d = used.dictionary();
+                d.removeObjectForKey(NSPrintJobSavingURL);
+                d.setObject_forKey(&NSNumber::new_bool(true), ProtocolObject::from_ref(NSPrintAllPages));
+                d.setObject_forKey(&NSNumber::new_isize(1), ProtocolObject::from_ref(NSPrintCopies));
+            }
             NSPrintInfo::setSharedPrintInfo(&used);
         }
     }
@@ -625,21 +640,22 @@ mod tests {
     #[test]
     fn page_area() {
         let a4 = (595., 842.);
-        let border = [18., 18., 18., 18.];
+        // imageablePageBounds (18, 41, 559, 783) of A4: left, top, right, bottom border.
+        let border = [18., 18., 18., 41.];
         let a = text_area(a4, border, [0; 4], None, None, 10.);
         assert_eq!(
             a,
             Area {
-                left: 33.,
-                top: 33.,
-                right: 562.,
-                bottom: 809.
+                left: 15.,
+                top: 15.,
+                right: 544.,
+                bottom: 768.
             }
         );
         let a = text_area(a4, border, [20, 5, 0, 10], Some(12.), Some(10.), 10.);
-        assert_eq!(a.left, 20. * 72. / 25.4 + 15.);
-        assert_eq!(a.top, 18. + 15. + 18.);
-        assert_eq!(a.right, 595. - 18. - 15.);
-        assert_eq!(a.bottom, 842. - 10. * 72. / 25.4 - 15. - 15.);
+        assert_eq!(a.left, 20. * 72. / 25.4 - 18. + 15.);
+        assert_eq!(a.top, 15. + 18.);
+        assert_eq!(a.right, 595. - 18. - 18. - 15.);
+        assert_eq!(a.bottom, 842. - 41. - 18. - 15. - 15.);
     }
 }

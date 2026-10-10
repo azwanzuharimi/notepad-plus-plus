@@ -35,7 +35,8 @@ Not affiliated with the Notepad++ project.
 - When text is selected, the panel shows the Selection choice, and it is on at first, as in Notepad++. Print Now prints the whole document.
 - Settings > Preferences > Print has the Notepad++ controls: Color Options (`SCI_SETPRINTCOLOURMODE`), Margin Setting in mm, Print line number, Print formfeed as page break, and the Header and Footer parts with font name, size, Bold, Italic and the Variable list with Add. They are stored in `<GUIConfig name="Print" ...>` of `config.xml`.
 - Header and footer variables: `$(SHORT_DATE)`, `$(LONG_DATE)`, `$(TIME)` (macOS date and time formats), `$(CURRENT_PRINTING_PAGE)`, and the Run menu variables such as `$(FULL_CURRENT_PATH)` and `$(FILE_NAME)`. As in Notepad++, only the first `$(SHORT_DATE)`, `$(LONG_DATE)`, `$(TIME)` and page variable of a part changes.
-- Not done: right-to-left header and footer text. An empty document prints one page with the header and footer; Notepad++ prints no page.
+- An empty document prints nothing, as in Notepad++.
+- Not done: right-to-left header and footer text.
 
 2026-10-10 (session snapshot and backup):
 
