@@ -716,7 +716,7 @@ impl App {
         self.tab_bars_redraw();
     }
 
-    fn colour_of(&self, item: &NSTabViewItem) -> Option<usize> {
+    pub(crate) fn colour_of(&self, item: &NSTabViewItem) -> Option<usize> {
         let i = self
             .ivars()
             .tabs
@@ -748,6 +748,32 @@ impl App {
                 c.push((it.clone(), n));
             }
         });
+        self.tab_bars_redraw();
+    }
+
+    // NppIO.cpp loadSession: the tabColourId and tabPinned attributes of each tab.
+    pub(crate) fn restore_tab_marks(&self, s: &crate::session::Session) {
+        let main = s.files.len().saturating_sub(s.in_sub_view);
+        let tabs: Vec<crate::Tab> = self.ivars().tabs.borrow().clone();
+        for (k, f) in s.files.iter().enumerate() {
+            let pane = usize::from(k >= main);
+            let Some(t) = tabs.iter().enumerate().find_map(|(i, t)| {
+                let same = match &t.path {
+                    Some(p) => crate::fileops::same_file(p, std::path::Path::new(&f.filename)),
+                    None => t.name == f.filename,
+                };
+                (same && self.pane_of(i) == pane).then_some(t)
+            }) else {
+                continue;
+            };
+            COLOURS.with(|c| c.borrow_mut().retain(|(x, _)| !std::ptr::eq(&**x, &*t.item)));
+            if let Ok(n @ 0..=4) = usize::try_from(f.tab_colour) {
+                COLOURS.with(|c| c.borrow_mut().push((t.item.clone(), n)));
+            }
+            if f.pinned {
+                PINNED.with(|p| p.borrow_mut().push(t.item.clone()));
+            }
+        }
         self.tab_bars_redraw();
     }
 

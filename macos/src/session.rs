@@ -57,6 +57,8 @@ pub struct FileInfo {
     pub read_only: bool,
     pub backup_file_path: String,
     pub original_timestamp: u64,
+    pub tab_colour: i64,
+    pub pinned: bool,
 }
 
 // The files of mainView then subView; `active` is an index in `files`.
@@ -119,6 +121,8 @@ pub fn parse_session(xml: &str) -> Option<Session> {
                         backup_file_path: attr(&e, "backupFilePath"),
                         original_timestamp: dword(&e, "originalFileLastModifTimestamp")
                             | dword(&e, "originalFileLastModifTimestampHigh") << 32,
+                        tab_colour: num(&e, "tabColourId", -1),
+                        pinned: attr(&e, "tabPinned") == "yes",
                     });
                 }
             }
@@ -163,7 +167,7 @@ pub fn write_session(s: &Session) -> String {
             out += &format!("        </mainView>\r\n        <subView activeIndex=\"{}\">\r\n", if view == 1 { index } else { 0 });
         }
         out += &format!(
-            "            <File firstVisibleLine=\"{}\" xOffset=\"{}\" startPos=\"{}\" endPos=\"{}\" selMode=\"{}\" lang=\"{}\" encoding=\"{}\" userReadOnly=\"{}\" filename=\"{}\" backupFilePath=\"{}\" originalFileLastModifTimestamp=\"{}\" originalFileLastModifTimestampHigh=\"{}\" />\r\n",
+            "            <File firstVisibleLine=\"{}\" xOffset=\"{}\" startPos=\"{}\" endPos=\"{}\" selMode=\"{}\" lang=\"{}\" encoding=\"{}\" userReadOnly=\"{}\" filename=\"{}\" backupFilePath=\"{}\" originalFileLastModifTimestamp=\"{}\" originalFileLastModifTimestampHigh=\"{}\" tabColourId=\"{}\" tabPinned=\"{}\" />\r\n",
             f.first_visible_line,
             f.x_offset,
             f.start_pos,
@@ -176,6 +180,8 @@ pub fn write_session(s: &Session) -> String {
             escape(f.backup_file_path.as_str()),
             f.original_timestamp & 0xFFFF_FFFF,
             f.original_timestamp >> 32,
+            f.tab_colour,
+            yes_no(f.pinned),
         );
     }
     let end = if main < s.files.len() {
@@ -637,6 +643,8 @@ impl App {
                     (Some(_), Some(m)) => backup::filetime(m),
                     _ => 0,
                 },
+                tab_colour: self.colour_of(&t.item).map_or(-1, |c| c as i64),
+                pinned: self.pinned_at(i),
             });
         }
         s
@@ -702,6 +710,7 @@ impl App {
             self.tab_view().selectTabViewItem(Some(&item));
         }
         self.restore_views(s);
+        self.restore_tab_marks(s);
     }
 
     // A character set is used again if the file has no BOM.
@@ -962,6 +971,8 @@ mod tests {
             read_only: false,
             backup_file_path: String::new(),
             original_timestamp: 0,
+            tab_colour: -1,
+            pinned: false,
         }
     }
 
@@ -1011,6 +1022,8 @@ mod tests {
                     lang: "python".into(),
                     encoding: 1251,
                     read_only: true,
+                    tab_colour: 3,
+                    pinned: true,
                     ..info("/tmp/a & \"b\" <c>.py")
                 },
                 info("/tmp/x.txt"),
@@ -1022,6 +1035,7 @@ mod tests {
         assert!(x.contains("<subView activeIndex=\"0\">\r\n            <File firstVisibleLine=\"0\""));
         assert!(x.contains("filename=\"/tmp/a &amp; &quot;b&quot; &lt;c&gt;.py\""));
         assert!(x.contains("userReadOnly=\"yes\""));
+        assert!(x.contains("tabColourId=\"3\" tabPinned=\"yes\""));
         assert_eq!(parse_session(&x), Some(s));
     }
 
