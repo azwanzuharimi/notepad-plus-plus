@@ -6,6 +6,7 @@ mod lang;
 mod panel;
 mod sci;
 mod search;
+mod search_extras;
 mod tools;
 mod view;
 
@@ -17,7 +18,7 @@ use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControlStateValueOff,
-    NSControlStateValueOn, NSEvent, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponseOK,
+    NSControlStateValueOn, NSEvent, NSMenu, NSMenuItem, NSModalResponseOK,
     NSOpenPanel, NSSplitView, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
     NSTextField, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
@@ -173,6 +174,7 @@ define_class!(
         #[unsafe(method(notification:))]
         fn notification(&self, scn: *const c_void) {
             let h = unsafe { &*(scn as *const NotifyHeader) };
+            self.margin_click(scn);
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 let n = self.ivars().tabs.borrow().len();
                 (0..n).for_each(|i| self.refresh_title(i));
@@ -586,6 +588,13 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(searchCmd:))]
+        fn search_cmd_action(&self, s: &NSMenuItem) {
+            self.search_cmd(s.tag());
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -800,15 +809,18 @@ impl App {
     }
 
     fn find(&self, up: bool) {
+        self.find_with(&self.find_ui().c.opts(), up);
+    }
+
+    fn find_with(&self, o: &search::Opts, up: bool) {
         let c = &self.find_ui().c;
-        let o = c.opts();
         let Some(v) = self.editor() else { return };
         if up && o.regex() {
             return;
         }
         let doc = sci::doc(&v);
         c.set_status(
-            &match search::find_next(&doc, &o, sci::selection(&v), up, Next::Find) {
+            &match search::find_next(&doc, o, sci::selection(&v), up, Next::Find) {
                 Ok(Some((m, w))) => {
                     sci::select(&v, m);
                     match w {
@@ -819,7 +831,7 @@ impl App {
                     .to_string()
                 }
                 Ok(None) if o.find.is_empty() => String::new(),
-                Ok(None) => search::not_found_status(&o),
+                Ok(None) => search::not_found_status(o),
                 Err(e) => e,
             },
         );
@@ -983,6 +995,11 @@ impl App {
         all.extend(self.ivars().result_lines.take());
         sci::prepend_results(v, *m, &all, &text);
         *self.ivars().result_lines.borrow_mut() = all;
+        self.reveal_results();
+    }
+
+    fn reveal_results(&self) {
+        let v = &self.ivars().results.get().unwrap().0;
         let split = self.ivars().split.get().unwrap();
         if v.frame().size.height < 40. {
             split.setPosition_ofDividerAtIndex(split.frame().size.height - 220., 0);
@@ -1040,6 +1057,8 @@ impl App {
             .and_then(|p| lang::language_for_path(cfg(), p));
         sci::apply_language(&view, cfg(), lang);
         self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()));
+        sci::setup_bookmark_margin(&view, cfg());
+        sci::setup_change_history(&view, cfg());
         let name = match &path {
             Some(p) => p
                 .file_name()
@@ -1440,23 +1459,7 @@ fn main() {
             ),
         ],
     );
-    let replace = item(mtm, "Replace...", sel!(showReplace:), "f", t);
-    replace
-        .setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Option);
-    submenu(
-        mtm,
-        &bar,
-        "Search",
-        vec![
-            item(mtm, "Find...", sel!(showFind:), "f", t),
-            item(mtm, "Find in Files...", sel!(showFindInFiles:), "F", t),
-            item(mtm, "Find Next", sel!(findNext:), "g", t),
-            item(mtm, "Find Previous", sel!(findPrevious:), "G", t),
-            replace,
-            NSMenuItem::separatorItem(mtm),
-            item(mtm, "Go to...", sel!(goToLine:), "l", t),
-        ],
-    );
+    submenu(mtm, &bar, "Search", search_extras::search_menu(mtm, t));
     submenu(mtm, &bar, "View", view::view_menu(mtm, t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));

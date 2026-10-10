@@ -143,6 +143,7 @@ pub fn set_bytes(v: &NSView, b: &[u8]) {
     send(v, SCI_APPENDTEXT, b.len(), b.as_ptr() as isize);
     send(v, SCI_EMPTYUNDOBUFFER, 0, 0);
     send(v, SCI_SETSAVEPOINT, 0, 0);
+    reset_change_history(v);
 }
 
 pub fn eol_mode(v: &NSView) -> usize {
@@ -501,4 +502,71 @@ pub fn set_zoom(v: &NSView, zoom: isize) {
     send(v, SCI_SETZOOM, zoom as usize, 0);
     let w = send_str(v, SCI_TEXTWIDTH, STYLE_LINENUMBER, "_99999");
     send(v, SCI_SETMARGINWIDTHN, 0, w);
+}
+
+const SCI_SETCHANGEHISTORY: u32 = 2780;
+const SCI_GETCHANGEHISTORY: u32 = 2781;
+
+fn margin_style<'a>(cfg: &'a Config, name: &str) -> Option<&'a Style> {
+    cfg.global_styles.iter().find(|s| s.name == name)
+}
+
+// Margin background as ScintillaEditView::performGlobalStyles reads it.
+fn margin_back(cfg: &Config, name: &str) -> isize {
+    margin_style(cfg, name)
+        .or_else(|| margin_style(cfg, "Line number margin"))
+        .and_then(|s| s.bg)
+        .unwrap_or(0xE0E0E0)
+}
+
+// Notepad++ margin 1: bookmarks with the Notepad++ icon; a click toggles a bookmark.
+pub fn setup_bookmark_margin(v: &NSView, cfg: &Config) {
+    use crate::search_extras::{bookmark_icon, BOOKMARK_MARGIN, MARK_BOOKMARK};
+    const SC_MARGIN_COLOUR: isize = 6;
+    const SCI_SETMARGINBACKN: u32 = 2250;
+    const SCI_MARKERSETALPHA: u32 = 2476;
+    const SCI_RGBAIMAGESETWIDTH: u32 = 2624;
+    const SCI_RGBAIMAGESETHEIGHT: u32 = 2625;
+    const SCI_MARKERDEFINERGBAIMAGE: u32 = 2626;
+    let m = BOOKMARK_MARGIN;
+    send(v, SCI_SETMARGINTYPEN, m, SC_MARGIN_COLOUR);
+    send(v, SCI_SETMARGINBACKN, m, margin_back(cfg, "Bookmark margin"));
+    send(v, SCI_SETMARGINMASKN, m, 1 << MARK_BOOKMARK);
+    send(v, SCI_SETMARGINWIDTHN, m, 16);
+    send(v, SCI_SETMARGINSENSITIVEN, m, 1);
+    send(v, SCI_RGBAIMAGESETWIDTH, 14, 0);
+    send(v, SCI_RGBAIMAGESETHEIGHT, 14, 0);
+    send(v, SCI_MARKERDEFINERGBAIMAGE, MARK_BOOKMARK, bookmark_icon().as_ptr() as isize);
+    send(v, SCI_MARKERSETALPHA, MARK_BOOKMARK, 70);
+}
+
+// Notepad++ margin 2: change history markers, on by default as in Notepad++.
+pub fn setup_change_history(v: &NSView, cfg: &Config) {
+    use crate::search_extras::{CHANGE_MARGIN, HISTORY_MASK};
+    const SC_MARGIN_COLOUR: isize = 6;
+    const SCI_SETMARGINBACKN: u32 = 2250;
+    const SC_CHANGE_HISTORY_MARKERS: usize = 3;
+    let m = CHANGE_MARGIN;
+    send(v, SCI_SETMARGINTYPEN, m, SC_MARGIN_COLOUR);
+    send(v, SCI_SETMARGINBACKN, m, margin_back(cfg, "Change History margin"));
+    send(v, SCI_SETMARGINMASKN, m, HISTORY_MASK);
+    send(v, SCI_SETMARGINWIDTHN, m, 9);
+    for (marker, name, rgb) in [
+        (21, "Change History revert origin", 0xBFA040),
+        (22, "Change History saved", 0x00A000),
+        (23, "Change History modified", 0x0080FF),
+        (24, "Change History revert modified", 0x00C0A0),
+    ] {
+        let s = margin_style(cfg, name);
+        send(v, SCI_MARKERSETFORE, marker, s.and_then(|s| s.fg).unwrap_or(rgb));
+        send(v, SCI_MARKERSETBACK, marker, s.and_then(|s| s.bg).unwrap_or(rgb));
+    }
+    send(v, SCI_SETCHANGEHISTORY, SC_CHANGE_HISTORY_MARKERS, 0);
+}
+
+// Starts change history again from the current text; Scintilla needs an empty undo buffer for this.
+pub fn reset_change_history(v: &NSView) {
+    let flags = send(v, SCI_GETCHANGEHISTORY, 0, 0);
+    send(v, SCI_SETCHANGEHISTORY, 0, 0);
+    send(v, SCI_SETCHANGEHISTORY, flags as usize, 0);
 }
