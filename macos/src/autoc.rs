@@ -890,6 +890,9 @@ impl App {
             (SCN_CALLTIPCLICK, 1) => self.autoc_cmd(PREV_HINT),
             (SCN_CALLTIPCLICK, 2) => self.autoc_cmd(NEXT_HINT),
             (SCN_CHARADDED, _) if n.ch != 0 && !macros::recording() => {
+                if !self.editor().is_some_and(|v| crate::large_file::allow_auto_completion(&v)) {
+                    return;
+                }
                 let Some(c) = self.autoc_ctx() else { return };
                 let p = crate::prefs::with(|p| p.auto_completion());
                 if (p.func_params || c.calltip_visible()) && c.update_tip(n.ch, false) {

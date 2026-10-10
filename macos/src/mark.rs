@@ -514,7 +514,7 @@ impl App {
         clear_all(&v, SMART);
         let p = crate::prefs::with(|p| p.smart_highlight());
         let (s, e) = sci::selection(&v);
-        if s == e || !p.enabled {
+        if s == e || !p.enabled || !crate::large_file::allow_smart_highlight(&v) {
             return;
         }
         let caret = send(&v, SCI_GETCURRENTPOS, 0, 0);

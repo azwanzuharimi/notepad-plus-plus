@@ -90,7 +90,14 @@ Not affiliated with the Notepad++ project.
 - Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
 - Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
 - `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page sets them.
-- Not done: the General page (it has only Localization), the Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+- Not done: the General page (it has only Localization), the Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Multi-Instance & Date pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+
+2026-10-10 (Links, Delimiter, Performance):
+
+- Clickable links: Notepad++ addHotSpot runs on the visible lines after each editor update (50 ms after the last one). The URL scan is a port of the Notepad++ scanner, with `ftp:// http:// https:// mailto: file://` and the "URI customized schemes". A double click on a link opens it with NSWorkspace, as in Notepad++. Cloud & Link has Enable, No underline, and Enable fullbox mode.
+- Delimiter page: the word character list (default, or default plus your characters, with `SCI_SETWORDCHARS`) and the delimiter selection. Cmd+double click selects the text between the Open and Close delimiters, on one line or on several lines.
+- Performance page: Large File Restriction. A file of the set size or more (200 MB by default) opens as Normal Text in a document without styles. Word wrap goes off if "Deactivate Word Wrap globally" is on. Auto-completion, smart highlighting, and clickable links are off for that file unless allowed. `large_file::allow_brace_match` is ready for brace match.
+- Not done: the Settings on cloud group, the "suppress 2GB+ warning" option, the InternetCrackUrl check (a scheme with text after it is a link), and the Notepad++ network path warning for `file://` links.
 
 2026-10-10 (User Defined Languages):
 
