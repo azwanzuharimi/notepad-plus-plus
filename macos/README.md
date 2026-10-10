@@ -8,6 +8,18 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (User Defined Languages):
+
+- The Notepad++ UDL lexer (`lexilla/lexers/LexUser.cxx`) is built without changes. It includes `windows.h` only for `_itoa`. The small header `src/shim/windows.h` gives that function. Before, an empty lexer took its place.
+- UDL files load from `userDefineLang.xml` and `userDefineLangs/*.xml` in the settings folder, as in Notepad++. The UDL 2.1, 2.0 and older formats load. At the first start, the app puts the two Markdown UDLs of the Notepad++ installer in `userDefineLangs`.
+- Language menu: the User Defined Language submenu (Define your language..., Open User Defined Language folder..., Notepad++ User Defined Languages Collection), the UDL names, and User-Defined, at the bottom as in Notepad++.
+- A file whose extension is in the `ext` list of a UDL uses that UDL before the built-in languages, as in Notepad++. In dark mode, a UDL with `darkModeTheme="yes"` comes first (for example "Markdown (preinstalled dark mode)"), else a light one. The status bar shows "User Defined language file - name". The session keeps the UDL name. Style Configurator and theme changes keep the UDL of a tab.
+- The lexer properties, keyword lists, and styles are set as `ScintillaEditView::setUserLexer` sets them.
+- Define your language... opens the User Defined Language dialog: the language list, Create new..., Save as..., Rename, Remove, Import..., Export..., Ignore case, Ext., and all four tabs (Folder & Default, Keywords Lists, Comment & Number, Operators & Delimiters). Each Styler button opens the Styler Dialog (font, size, bold, italic, underline, colours, transparent, nesting). Changes apply to open UDL tabs at once. The UDL file is written 1 second after the last change, when the dialog closes, and at quit.
+- Import... copies the file into the `userDefineLangs` folder. Notepad++ adds the imported UDLs to `userDefineLang.xml`.
+- Not done: Dock, Transparency, live preview in the Styler Dialog (changes apply on OK), the theme colours for a new UDL (`startAtTheme`), comment commands and auto-completion for UDL tabs, and the font list check (`isInFontList`).
+- Quoted keywords with non-ASCII characters work. Notepad++ on Windows drops these characters, because it reads them as signed `char`.
+
 2026-10-10 (Style Configurator, themes):
 
 - Settings > Style Configurator...: Select theme, Language (Global Styles first), Style, Foreground and Background colour, Font name (the macOS fonts), Font size, Bold, Italic, Underline, Default ext. and User ext., Default and User-defined keywords, and the 7 Global override check boxes. Changes show at once in all open editors. Cancel and the close button go back to the styles from before. There is no Apply button and no Transparency, as in Notepad++. There is no "Go to settings" link.
@@ -26,7 +38,7 @@ Not affiliated with the Notepad++ project.
 - Function List has a search box, a Sort button, and a Reload button. Sort and search text stay for each file. A double click on a function puts its line in the middle of the editor. The function at the caret is selected. The list loads again on tab switch, save, and language change, as in Notepad++. There is no Return key action, no Preferences menu, and no "Sort functions (A to Z) by default" option.
 - Document List shows Name and Ext. columns and an icon for a modified or read-only tab. A click on a row switches to the tab. There is no context menu, no Path column, and no sort by column.
 - Function List does not parse a file larger than 10 MB and shows "File too large for Function List". This limit is only in this app: Notepad++ parses any size, and the parse blocks the window. Notepad++ uses Normal Text, so no Function List, only for files of 200 MB or more.
-- User Defined Language parsers (KRL, NppExec, Sinumerik, UniVerse BASIC) are not used, because the app has no User Defined Languages.
+- User Defined Language parsers (KRL, NppExec, Sinumerik, UniVerse BASIC) are not used yet.
 
 2026-10-10 (Paste Special, substyles):
 
@@ -86,7 +98,7 @@ Not affiliated with the Notepad++ project.
 - Case conversion maps one character to one character, as Windows does (for example, ß stays ß in UPPERCASE). Text sorts compare UTF-8 bytes, not UTF-16 units.
 - Multiple and rectangular selections: Convert Case and the sorts do nothing. The other commands use only the main selection.
 - Read-Only on Current Document disables EOL Conversion and the Encoding commands. A read-only tab still reloads when its file changes.
-- Language menu: None (Normal Text) and the A to V groups of the compact Notepad++ menu, with the same text and order. A checkmark shows the language of the tab. The status bar shows the language name. There are no User Defined Language items.
+- Language menu: None (Normal Text) and the A to V groups of the compact Notepad++ menu, with the same text and order. A checkmark shows the language of the tab. The status bar shows the language name.
 - A language set from the Language menu stays when Save As or Rename changes the file name, as in Notepad++. Otherwise, the language is found again from the new name.
 - The language comes from the file name too: Makefile, GNUmakefile, CMakeLists.txt, SConstruct, SConscript, wscript, Rakefile, Vagrantfile, crontab, PKGBUILD, and APKBUILD (any case). A name that starts with a dot uses the text after the dot (`.bashrc` is Shell). Notepad++ does not find a language for `Dockerfile`, and neither does this app. The first line of the file (for example `#!/bin/sh`) is not used yet.
 - Edit > Comment/Uncomment: Toggle Single Line Comment (Cmd+/), Single Line Comment (Cmd+K), Single Line Uncomment (Shift+Cmd+K), Block Comment (Opt+Cmd+/, because Shift+Cmd+/ is the macOS Help search), and Block Uncomment. The commands use the selection start and end, so a rectangular selection changes each of its lines. The comment tokens come from `langs.model.xml`. Each command is one undo step and does nothing in a read-only tab.
