@@ -212,12 +212,44 @@ fn status_colour(k: Status) -> Option<Retained<NSColor>> {
         .and_then(|s| s.fg)
         .unwrap_or(def);
     let c = |s: isize| ((bgr >> s) & 0xFF) as f64 / 255.;
+    let mut rgb = [c(0), c(8), c(16)];
+    if styler::dark() {
+        rgb = dark_tune(rgb);
+    }
     Some(NSColor::colorWithSRGBRed_green_blue_alpha(
-        c(0),
-        c(8),
-        c(16),
-        1.,
+        rgb[0], rgb[1], rgb[2], 1.,
     ))
+}
+
+// HLSColour::toRGB4DarkMod: lightness 50 more and saturation 20 less, on the Windows 0 to 240 scale.
+pub fn dark_tune([r, g, b]: [f64; 3]) -> [f64; 3] {
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (max + min) / 2.;
+    let d = max - min;
+    let s = if d == 0. { 0. } else { d / (1. - (2. * l - 1.).abs()) };
+    let h = if d == 0. {
+        0.
+    } else if max == r {
+        ((g - b) / d).rem_euclid(6.)
+    } else if max == g {
+        (b - r) / d + 2.
+    } else {
+        (r - g) / d + 4.
+    };
+    let l = (l + 50. / 240.).min(1.);
+    let s = (s - 20. / 240.).max(0.);
+    let c = (1. - (2. * l - 1.).abs()) * s;
+    let x = c * (1. - (h.rem_euclid(2.) - 1.).abs());
+    let m = l - c / 2.;
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.),
+        1 => (x, c, 0.),
+        2 => (0., c, x),
+        3 => (0., x, c),
+        4 => (x, 0., c),
+        _ => (c, 0., x),
+    };
+    [r + m, g + m, b + m]
 }
 
 // NB_MAX_FINDHISTORY_* of Parameters.cpp, in the order path, filter, find, replace.
@@ -648,6 +680,7 @@ impl FindDlg {
         let i = TABS.iter().position(|t| t.0 == tab).unwrap_or(0);
         self.tabs.setSelectedSegment(i as isize);
         self.form.panel.setTitle(&ns(TABS[i].1));
+        crate::l10n::retranslate(&self.form.panel);
     }
 
     // The IDREGEXP, IDEXTENDED and IDNORMAL handlers, and IDC_TRANSPARENT_CHECK.
@@ -854,6 +887,7 @@ fn build(app: &App) -> FindDlg {
     let tall = |s: &str, a: Sel| {
         let b = button(s, a);
         b.setBezelStyle(NSBezelStyle::FlexiblePush);
+        b.setToolTip(Some(&ns(s)));
         b
     };
     add(
@@ -910,9 +944,9 @@ fn build(app: &App) -> FindDlg {
     .map(|s| radio(s, refresh));
     place(&modes[0], [12., 143., 150., 10.]);
     place(&modes[1], [12., 155., 150., 10.]);
-    place(&modes[2], [12., 167., 78., 10.]);
+    place(&modes[2], [12., 167., 82., 10.]);
     let dot_nl = check(". matches newline", refresh);
-    place(&dot_nl, [93., 167., 101., 10.]);
+    place(&dot_nl, [96., 167., 100., 10.]);
 
     let tr = sel!(findTransparency:);
     let tr_box = NSBox::new(mtm);
@@ -1581,5 +1615,9 @@ mod tests {
         );
         assert_eq!(split_status("a\nb\nc"), ("a", "b\nc"));
         assert_eq!(split_status("a"), ("a", ""));
+        let round = |v: [f64; 3]| v.map(|x| (x * 255.).round() as u8);
+        assert_eq!(round(dark_tune([0., 0., 1.])), [112, 112, 249]);
+        assert_eq!(round(dark_tune([1., 0., 0.])), [249, 112, 112]);
+        assert_eq!(round(dark_tune([0.5, 0.5, 0.5])), [181, 181, 181]);
     }
 }
