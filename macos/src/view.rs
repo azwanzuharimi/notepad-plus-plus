@@ -413,7 +413,7 @@ impl App {
     // AppKit changes a Ctrl+Cmd+F item at launch and adds a second item, so the key is set after the launch.
     pub(crate) fn full_screen_key(&self) {
         let bar = objc2_app_kit::NSApplication::sharedApplication(self.mtm()).mainMenu();
-        let Some(m) = bar.and_then(|b| b.itemWithTitle(&ns("View"))?.submenu()) else {
+        let Some(m) = bar.and_then(|b| crate::l10n::bar_menu(&b, "View")) else {
             return;
         };
         if let Some(i) = m.itemArray().iter().find(|i| i.action() == Some(sel!(fullScreen:))) {

@@ -5,7 +5,7 @@ use objc2::runtime::{AnyObject, NSObject};
 use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSApplication, NSButton, NSMenu, NSMenuDidAddItemNotification, NSMenuItem, NSPopUpButton,
-    NSTextField, NSUserInterfaceLayoutDirection, NSView, NSWindow,
+    NSTableView, NSTextField, NSUserInterfaceLayoutDirection, NSView, NSWindow,
     NSWindowDidBecomeKeyNotification,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSNumber, NSObjectProtocol};
@@ -221,7 +221,7 @@ fn capture<'a>(t: &str, s: &'a str) -> Option<Vec<(String, &'a str)>> {
             (Some(_), true) => s
                 .len()
                 .checked_sub(x.len())
-                .filter(|&a| a >= pos && s[a..] == **x)?,
+                .filter(|&a| a >= pos && s.is_char_boundary(a) && s[a..] == **x)?,
             (Some(_), false) => pos + s[pos..].find(x)?,
         };
         if let Some(n) = open.take() {
@@ -247,8 +247,11 @@ fn message_text(en: &El, tr: &El, s: &str) -> Option<String> {
             else {
                 continue;
             };
-            for (n, v) in caps {
-                t = t.replace(&n, v);
+            for (n, v) in &caps {
+                t = t.replacen(n.as_str(), v, 1);
+            }
+            for (n, v) in caps.iter().rev() {
+                t = t.replace(n.as_str(), v);
             }
             return Some(t);
         }
@@ -424,24 +427,29 @@ impl State {
             Some((o, s)) if *s == cur => o.clone(),
             _ => cur.clone(),
         };
-        let d = dialog(&self.en, &orig).map(|(d, a)| (d.name.clone(), a.to_string()));
+        let Some((tag, a)) = dialog(&self.en, &orig).map(|(d, a)| (d.name.clone(), a.to_string()))
+        else {
+            return;
+        };
         if let Some(t) = self.retitle(p, &cur, |_, tr, _| {
-            let (tag, a) = d.as_ref()?;
-            tr.path(&["Dialog", tag])?
-                .attr(a)
+            tr.path(&["Dialog", &tag])?
+                .attr(&a)
                 .map(clean)
                 .filter(|s| !s.is_empty())
         }) {
             w.setTitle(&ns(&t));
         }
         if let Some(v) = w.contentView() {
-            self.view(&v, d.as_ref().map(|(t, _)| t.as_str()));
+            self.view(&v, &tag);
         }
     }
 
-    fn view(&mut self, v: &NSView, tag: Option<&str>) {
+    fn view(&mut self, v: &NSView, tag: &str) {
+        if v.isKindOfClass(NSTableView::class()) {
+            return;
+        }
         let text = |en: &El, tr: &El, o: &str| {
-            let d = en.path(&["Dialog", tag?])?;
+            let d = en.path(&["Dialog", tag])?;
             dialog_text(tr, d, o)
         };
         let p = v as *const NSView as usize;
@@ -787,6 +795,18 @@ mod tests {
             [("$STR_REPLACE$".to_string(), "/a b")]
         );
         assert_eq!(capture("\"$STR_REPLACE$\"", "\"x\""), None);
+        assert_eq!(
+            capture(
+                "Cannot open file \"$STR_REPLACE$\".",
+                "Cannot open file \"/a/b€"
+            ),
+            None
+        );
+        assert_eq!(capture("x $STR_REPLACE$ €.", "x a€."), None);
+        assert_eq!(
+            capture("a$STR_REPLACE$é", "aé€é").unwrap(),
+            [("$STR_REPLACE$".to_string(), "é€")]
+        );
         assert_eq!(capture("Sort Failed", "Sort Failed!"), None);
         let fr_open = fr
             .path(&["MessageBox", "OpenFileError"])
@@ -798,6 +818,24 @@ mod tests {
             Some(fr_open.replace("$STR_REPLACE$", "/tmp/x"))
         );
         assert_eq!(message_text(&en, &fr, "Not a Notepad++ message"), None);
+    }
+
+    #[test]
+    fn repeated_placeholders_fill_in_order() {
+        let doc = |m: &str| {
+            parse(&format!("<NotepadPlus><Native-Langue><MessageBox><X title=\"T\" message=\"{m}\"/></MessageBox></Native-Langue></NotepadPlus>")).unwrap()
+        };
+        let en = doc("Copy $STR_REPLACE$ to $STR_REPLACE$ now");
+        let tr = doc("Copier $STR_REPLACE$ vers $STR_REPLACE$");
+        assert_eq!(
+            message_text(&en, &tr, "Copy a to b now").as_deref(),
+            Some("Copier a vers b")
+        );
+        let tr = doc("$STR_REPLACE$ / $STR_REPLACE$ / $STR_REPLACE$");
+        assert_eq!(
+            message_text(&en, &tr, "Copy a to b now").as_deref(),
+            Some("a / b / b")
+        );
     }
 
     #[test]
