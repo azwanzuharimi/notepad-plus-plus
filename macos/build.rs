@@ -71,12 +71,8 @@ fn main() {
         .define("LEXILLA_NO_EXPORT", None)
         .files(files("../lexilla/src", ".cxx"))
         .files(files("../lexilla/lexlib", ".cxx"))
-        .files(
-            files("../lexilla/lexers", ".cxx")
-                .into_iter()
-                .filter(|f| !f.ends_with("LexUser.cxx")),
-        )
-        .file("src/lexuser_stub.cxx")
+        .include("src/shim")
+        .files(files("../lexilla/lexers", ".cxx"))
         .compile("lexilla");
     base()
         .include("../PowerEditor/src/uchardet")
@@ -91,7 +87,7 @@ fn main() {
         "../scintilla/src",
         "../scintilla/cocoa",
         "../lexilla",
-        "src/lexuser_stub.cxx",
+        "src/shim",
         "../boostregex",
         "src/docsearch.cxx",
         "../PowerEditor/src/uchardet",

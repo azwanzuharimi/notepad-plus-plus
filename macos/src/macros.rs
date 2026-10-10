@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 44] = [
+const NOT_RECORDED: [&str; 48] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -90,6 +90,10 @@ const NOT_RECORDED: [&str; 44] = [
     "IDM_VIEW_FUNC_LIST",
     "IDM_LANGSTYLE_CONFIG_DLG",
     "IDM_SETTING_IMPORTSTYLETHEMES",
+    "IDM_LANG_USER",
+    "IDM_LANG_USER_DLG",
+    "IDM_LANG_OPENUDLDIR",
+    "IDM_LANG_UDLCOLLECTION_PROJECT_SITE",
 ];
 
 struct Cmd {
@@ -314,6 +318,10 @@ fn menu_cmds() -> Vec<Cmd> {
     v.push(("IDM_SEARCH_GONEXTMARKER_DEF".into(), 43044, "markCmd:", 46));
     v.push(("IDM_SEARCH_ALLSTYLESTOCLIP".into(), 43060, "markCmd:", 55));
     v.push(("IDM_SEARCH_MARKEDTOCLIP".into(), 43061, "markCmd:", 56));
+    v.push(("IDM_LANG_USER".into(), 46180, "userDefined:", -1));
+    v.push(("IDM_LANG_USER_DLG".into(), 46250, "defineUdl:", -1));
+    v.push(("IDM_LANG_OPENUDLDIR".into(), 46300, "openUdlFolder:", -1));
+    v.push(("IDM_LANG_UDLCOLLECTION_PROJECT_SITE".into(), 46301, "udlCollection:", -1));
     v.push(("IDM_WINDOW_WINDOWS".into(), 11001, "showWindows:", -1));
     for (k, n) in ["FN_ASC", "FN_DSC", "FP_ASC", "FP_DSC", "FT_ASC", "FT_DSC", "FS_ASC", "FS_DSC", "FD_ASC", "FD_DSC"]
         .into_iter()
@@ -1090,6 +1098,7 @@ mod tests {
         let l = src
             .lines()
             .find(|l| l.split_whitespace().take(2).eq(["#define", n]))
+            .and_then(|l| l.split("//").next())
             .unwrap_or_else(|| panic!("{n}"));
         let v: String = l.split_whitespace().skip(2).collect();
         let v = v.trim_matches(|c| c == '(' || c == ')');
@@ -1150,6 +1159,7 @@ mod tests {
             include_str!("autoc.rs"),
             include_str!("binary.rs"),
             include_str!("style_dlg.rs"),
+            include_str!("udl/mod.rs"),
         ]
         .concat();
         let table = menu_cmds();

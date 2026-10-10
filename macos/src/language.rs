@@ -99,6 +99,7 @@ pub fn language_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retain
             Entry::Group(g, v) => nested(mtm, &g, v.iter().map(it).collect()),
             Entry::Separator => NSMenuItem::separatorItem(mtm),
         })
+        .chain(crate::udl::menu_items(mtm, t))
         .collect()
 }
 
@@ -133,6 +134,9 @@ pub(crate) fn tab_language(t: &Tab) -> Option<&'static Language> {
 
 impl App {
     pub(crate) fn apply_tab_language(&self, i: usize) {
+        if self.apply_udl_at(i) {
+            return;
+        }
         if let Some(t) = self.tab(i) {
             let l = tab_language(&t);
             sci::apply_language(&t.view, cfg(), l);

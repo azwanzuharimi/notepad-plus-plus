@@ -25,6 +25,7 @@ mod session;
 mod style_dlg;
 mod styler;
 mod tools;
+mod udl;
 mod view;
 mod window;
 
@@ -1131,8 +1132,61 @@ define_class!(
                     return NSApplicationTerminateReply::TerminateCancel;
                 }
             }
+            self.udl_flush();
             self.save_on_quit(&session);
             NSApplicationTerminateReply::TerminateNow
+        }
+    }
+
+    impl App {
+        #[unsafe(method(setUdl:))]
+        fn set_udl_action(&self, s: &NSMenuItem) {
+            self.set_udl(s.tag());
+        }
+
+        #[unsafe(method(userDefined:))]
+        fn user_defined_action(&self, _s: Option<&AnyObject>) {
+            self.user_defined();
+        }
+
+        #[unsafe(method(defineUdl:))]
+        fn define_udl_action(&self, _s: Option<&AnyObject>) {
+            self.define_udl();
+        }
+
+        #[unsafe(method(openUdlFolder:))]
+        fn open_udl_folder_action(&self, _s: Option<&AnyObject>) {
+            self.open_udl_folder();
+        }
+
+        #[unsafe(method(udlCollection:))]
+        fn udl_collection_action(&self, _s: Option<&AnyObject>) {
+            self.udl_collection();
+        }
+
+        #[unsafe(method(udlLang:))]
+        fn udl_lang_action(&self, _s: Option<&AnyObject>) {
+            self.udl_lang();
+        }
+
+        #[unsafe(method(udlCommand:))]
+        fn udl_command_action(&self, s: &NSButton) {
+            self.udl_command(s.tag());
+        }
+
+        #[unsafe(method(udlEdit:))]
+        fn udl_edit_action(&self, s: &objc2_app_kit::NSControl) {
+            self.udl_edit(s.tag());
+        }
+
+        #[unsafe(method(udlSave:))]
+        fn udl_save_action(&self, _s: Option<&AnyObject>) {
+            self.udl_flush();
+        }
+
+        #[unsafe(method(udlStyler:))]
+        fn udl_styler_action(&self, s: &NSButton) {
+            self.udl_styler(s.tag());
         }
     }
 
@@ -1546,6 +1600,7 @@ impl App {
             lang: None,
         });
         let last = self.ivars().tabs.borrow().len() - 1;
+        self.apply_udl_at(last);
         self.refresh_title(last);
         self.tab_view().addTabViewItem(&item);
         self.tab_view().selectTabViewItem(Some(&item));
@@ -1571,6 +1626,9 @@ impl App {
         }
         if self.validate_view(item) {
             return true;
+        }
+        if let Some(on) = self.validate_udl(item) {
+            return on;
         }
         if let Some(on) = self.validate_language(item) {
             return on;
@@ -1634,7 +1692,8 @@ impl App {
             None => format!("Pos: {}", c(pos)),
         };
         let texts = [
-            lang::long_name(lang.map_or("normal", |l| l.name.as_str())),
+            self.udl_status(&t)
+                .unwrap_or_else(|| lang::long_name(lang.map_or("normal", |l| l.name.as_str()))),
             format!(
                 "length: {}    lines: {}",
                 c(sci::length(v)),

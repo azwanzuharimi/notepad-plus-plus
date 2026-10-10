@@ -485,10 +485,12 @@ impl App {
                 start_pos: get(SCI_GETANCHOR),
                 end_pos: get(SCI_GETCURRENTPOS),
                 sel_mode: get(SCI_GETSELECTIONMODE),
-                lang: lang_menu_text(
-                    cfg(),
-                    language::tab_language(t).map_or("normal", |l| l.name.as_str()),
-                ),
+                lang: self.udl_session_name(t).unwrap_or_else(|| {
+                    lang_menu_text(
+                        cfg(),
+                        language::tab_language(t).map_or("normal", |l| l.name.as_str()),
+                    )
+                }),
                 encoding: match t.enc {
                     Enc::Cp(cp) => cp as i64,
                     _ => -1,
@@ -528,8 +530,9 @@ impl App {
                 .tab(i)
                 .and_then(|t| language::tab_language(&t))
                 .map(|l| l.name.clone());
-            if let Some(name) =
-                lang_from_menu_text(cfg(), &f.lang).filter(|n| Some(n) != detected.as_ref())
+            let udl = self.restore_udl(i, &f.lang);
+            if let Some(name) = lang_from_menu_text(cfg(), &f.lang)
+                .filter(|n| !udl && Some(n) != detected.as_ref())
             {
                 if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
                     t.lang = Some(name);

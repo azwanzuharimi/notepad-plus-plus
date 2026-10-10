@@ -836,13 +836,15 @@ impl App {
     // Applies `c` to the open editors: Notepad++ WM_UPDATESCINTILLAS.
     pub(crate) fn restyle(&self, c: &Config) {
         let tabs = self.ivars().tabs.borrow().clone();
-        for t in &tabs {
-            let l = match &t.lang {
-                Some(n) => c.languages.iter().find(|l| &l.name == n),
-                None => lang::language_for_path(c, t.path.as_deref().unwrap_or(Path::new(&t.name))),
-            };
-            sci::apply_language(&t.view, c, l);
-            self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()), c);
+        for (i, t) in tabs.iter().enumerate() {
+            if !self.apply_udl_with(i, c) {
+                let l = match &t.lang {
+                    Some(n) => c.languages.iter().find(|l| &l.name == n),
+                    None => lang::language_for_path(c, t.path.as_deref().unwrap_or(Path::new(&t.name))),
+                };
+                sci::apply_language(&t.view, c, l);
+                self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()), c);
+            }
             sci::setup_bookmark_margin(&t.view, c);
             sci::setup_change_history(&t.view, c);
             mark::setup_indicators(&t.view, c);
