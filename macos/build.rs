@@ -27,7 +27,20 @@ fn base() -> cc::Build {
     b
 }
 
+// Writes APIS: the PowerEditor/installer/APIs files embedded by name, as Notepad++ installs them in autoCompletion.
+fn embed_apis() {
+    let mut out = String::from("pub const APIS: &[(&str, &str)] = &[\n");
+    for f in files("../PowerEditor/installer/APIs", ".xml") {
+        let p = fs::canonicalize(&f).unwrap();
+        let name = p.file_stem().unwrap().to_str().unwrap().to_string();
+        out += &format!("    ({name:?}, include_str!({:?})),\n", p.to_str().unwrap());
+    }
+    out += "];\n";
+    fs::write(std::env::var("OUT_DIR").unwrap() + "/apis.rs", out).unwrap();
+}
+
 fn main() {
+    embed_apis();
     base()
         .files(files("../scintilla/src", ".cxx"))
         .file("../boostregex/BoostRegExSearch.cxx")
@@ -68,6 +81,7 @@ fn main() {
         "src/docsearch.cxx",
         "../PowerEditor/src/uchardet",
         "src/charset.cxx",
+        "../PowerEditor/installer/APIs",
     ] {
         println!("cargo:rerun-if-changed={d}");
     }

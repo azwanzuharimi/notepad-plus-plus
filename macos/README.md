@@ -8,6 +8,17 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Auto-Completion):
+
+- Edit > Auto-Completion: Function Completion (Ctrl+Space), Word Completion (Cmd+Return), Function Parameters Hint (Ctrl+Shift+Space), Previous and Next Hint (Opt+Up, Opt+Down), and Path Completion (Ctrl+Opt+Space). The Space keys use Ctrl, because Cmd+Space is Spotlight.
+- The 34 files in `PowerEditor/installer/APIs` are built into the app. The file name is the language name, as in Notepad++. `coffee.xml` is not used, because the language name is `coffeescript` (the same in Notepad++).
+- The Notepad++ defaults apply: function and word completion after 1 character, numbers ignored, a parameter hint on `(` and `,`, and no auto-insert of pairs or close tags. There is no Preferences page for these settings yet.
+- Path completion lists the files of a Unix path that starts with `/` or `~/`. The path starts at the last `/` or `~/` at the line start or after a space, a quote, or `(`, as Notepad++ does with `C:`. A path can contain spaces, but a `/` right after a space starts a new path.
+- Ctrl+Space and Ctrl+Opt+Space are also the macOS shortcuts to change the input source. If you use more than one input source, macOS can take these keys first. Change them in System Settings > Keyboard > Keyboard Shortcuts > Input Sources.
+- Function Parameters Previous Hint and Next Hint are disabled when no call tip shows, so Opt+Up and Opt+Down work in text fields. Notepad++ keeps them enabled.
+- No completion shows while a macro records, as in Notepad++. The auto-completion commands are not recorded in macros, as in Notepad++.
+- The language comes from the Language menu, else from the file name. Dark mode images and colours for the list are not used.
+
 2026-10-10 (multi-select and column mode):
 
 - Edit menu: Multi-select All and Multi-select Next (4 items each), Undo the Latest Added Multi-Select, Skip Current & Go to Next Multi-select, Column Mode..., and Column Editor... (Cmd+Opt+C, Alt+C in Notepad++).

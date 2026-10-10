@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 30] = [
+const NOT_RECORDED: [&str; 36] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -76,6 +76,12 @@ const NOT_RECORDED: [&str; 30] = [
     "IDM_WINDOW_SORT_FS_DSC",
     "IDM_WINDOW_SORT_FD_ASC",
     "IDM_WINDOW_SORT_FD_DSC",
+    "IDM_EDIT_AUTOCOMPLETE",
+    "IDM_EDIT_AUTOCOMPLETE_CURRENTFILE",
+    "IDM_EDIT_FUNCCALLTIP",
+    "IDM_EDIT_FUNCCALLTIP_PREVIOUS",
+    "IDM_EDIT_FUNCCALLTIP_NEXT",
+    "IDM_EDIT_AUTOCOMPLETE_PATH",
 ];
 
 struct Cmd {
@@ -150,6 +156,12 @@ fn menu_cmds() -> Vec<Cmd> {
             0,
         ),
         ("IDM_EDIT_INSERT_DATETIME_LONG", 42085, "insertDateTime:", 1),
+        ("IDM_EDIT_AUTOCOMPLETE", 50000, "autoComplete:", 0),
+        ("IDM_EDIT_AUTOCOMPLETE_CURRENTFILE", 50001, "autoComplete:", 1),
+        ("IDM_EDIT_FUNCCALLTIP", 50002, "autoComplete:", 2),
+        ("IDM_EDIT_FUNCCALLTIP_PREVIOUS", 50010, "autoComplete:", 3),
+        ("IDM_EDIT_FUNCCALLTIP_NEXT", 50011, "autoComplete:", 4),
+        ("IDM_EDIT_AUTOCOMPLETE_PATH", 50006, "autoComplete:", 5),
         ("IDM_SEARCH_FINDNEXT", 43002, "findNext:", -1),
         ("IDM_SEARCH_FINDPREV", 43010, "findPrevious:", -1),
         ("IDM_SEARCH_SETANDFINDNEXT", 43048, "searchCmd:", 0),
@@ -631,7 +643,7 @@ pub fn menus(mtm: MainThreadMarker, bar: &NSMenu, t: Option<&AnyObject>) {
     }
 }
 
-fn recording() -> bool {
+pub(crate) fn recording() -> bool {
     S.with(|s| s.recording.get())
 }
 
@@ -1066,7 +1078,7 @@ mod tests {
         let v: String = l.split_whitespace().skip(2).collect();
         let v = v.trim_matches(|c| c == '(' || c == ')');
         match v.split_once('+') {
-            Some((b, o)) => id_of(src, b) + o.parse::<i32>().unwrap(),
+            Some((b, o)) => b.parse().unwrap_or_else(|_| id_of(src, b)) + o.parse::<i32>().unwrap(),
             None => v.parse().unwrap(),
         }
     }
@@ -1119,6 +1131,7 @@ mod tests {
             include_str!("column.rs"),
             include_str!("mark.rs"),
             include_str!("window.rs"),
+            include_str!("autoc.rs"),
         ]
         .concat();
         let table = menu_cmds();
@@ -1186,6 +1199,7 @@ mod tests {
             (include_str!("mark.rs"), "COPY: isize = 50;"),
             (include_str!("mark.rs"), "ALL: isize = 5;"),
             (include_str!("mark.rs"), "FIND_STYLE: isize = 6;"),
+            (include_str!("autoc.rs"), "FUNC_COMPLETION: isize = 0;\nconst WORD_COMPLETION: isize = 1;\nconst PARAMS_HINT: isize = 2;\nconst PREV_HINT: isize = 3;\nconst NEXT_HINT: isize = 4;\nconst PATH_COMPLETION: isize = 5;"),
             (include_str!("edit.rs"), "SCI_CLEAR: u32 = 2180;"),
             (include_str!("edit.rs"), "SCI_LINEDUPLICATE: u32 = 2404;"),
             (include_str!("edit.rs"), "SCI_MOVESELECTEDLINESUP: u32 = 2620;"),

@@ -1270,6 +1270,7 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         nested(mtm, "Convert Case to", cases),
         nested(mtm, "Line Operations", lines),
         crate::language::comment_menu(mtm, t),
+        crate::autoc::autoc_menu(mtm, t),
         nested(mtm, "EOL Conversion", eols),
         nested(
             mtm,
