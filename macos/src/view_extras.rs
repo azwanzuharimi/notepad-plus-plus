@@ -328,7 +328,7 @@ impl App {
         hide_lines(&mut Sci(&v), first, last);
     }
 
-    fn monitored(&self, item: &NSTabViewItem) -> bool {
+    pub(crate) fn monitored(&self, item: &NSTabViewItem) -> bool {
         MONITORED.with(|m| {
             m.borrow()
                 .iter()

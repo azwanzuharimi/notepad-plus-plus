@@ -310,7 +310,6 @@ pub struct Entry {
 struct State {
     entries: RefCell<HashMap<usize, Entry>>,
     changed: RefCell<HashSet<usize>>,
-    stamps: RefCell<HashMap<usize, u64>>,
     armed: Cell<bool>,
     last_session: RefCell<String>,
 }
@@ -332,20 +331,6 @@ fn backend(v: &NSView) -> usize {
 
 pub fn entry(v: &NSView) -> Option<Entry> {
     ST.with(|s| s.entries.borrow().get(&key(v)).cloned())
-}
-
-// Buffer.cpp getLastModifiedFileTimestamp: the file time at the last load or save.
-pub fn stamp_of(v: &NSView) -> u64 {
-    ST.with(|s| s.stamps.borrow().get(&key(v)).copied().unwrap_or(0))
-}
-
-pub fn file_loaded(v: &NSView, p: Option<&Path>) {
-    let k = key(v);
-    let t = p.and_then(mtime);
-    ST.with(|s| match t {
-        Some(t) => s.stamps.borrow_mut().insert(k, t),
-        None => s.stamps.borrow_mut().remove(&k),
-    });
 }
 
 #[repr(C)]
@@ -394,7 +379,6 @@ fn state_free() -> bool {
     ST.try_with(|s| {
         s.entries.try_borrow_mut().is_ok()
             && s.changed.try_borrow_mut().is_ok()
-            && s.stamps.try_borrow_mut().is_ok()
             && s.last_session.try_borrow_mut().is_ok()
     })
     .unwrap_or(false)
@@ -554,7 +538,6 @@ impl App {
         } else {
             ST.with(|s| s.entries.borrow_mut().remove(&key(&v)));
         }
-        ST.with(|s| s.stamps.borrow_mut().remove(&key(&v)));
     }
 
     pub(crate) fn write_session_now(&self) {

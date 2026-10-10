@@ -217,8 +217,11 @@ const DETECT_NAMES: [(&str, u8); 9] = [
     ),
 ];
 
-// Parameters.cpp feedGUIParameters "Auto-detection": an unknown text is cdDisabled.
+// Parameters.cpp feedGUIParameters "Auto-detection": no text keeps cdEnabledNew, an unknown text is cdDisabled.
 pub fn detect_bits(s: &str) -> u8 {
+    if s.trim().is_empty() {
+        return CD_ENABLED_NEW;
+    }
     DETECT_NAMES
         .iter()
         .find(|(n, _)| *n == s.trim())
@@ -242,7 +245,6 @@ pub fn detect_name(bits: u8) -> &'static str {
 
 // File Status Auto-Detection, as Preferences > MISC. shows it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub struct AutoDetect {
     pub enabled: bool,
     pub all_files: bool,
@@ -2696,6 +2698,7 @@ mod tests {
             assert_eq!(detect_name(b), n);
         }
         assert_eq!(detect_bits("bad"), 0);
+        assert_eq!(detect_bits(""), CD_ENABLED_NEW);
         assert_eq!(detect_name(CD_AUTO_UPDATE), "no");
     }
 

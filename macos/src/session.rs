@@ -612,7 +612,10 @@ impl App {
                 backup_file_path: b
                     .as_ref()
                     .map_or(String::new(), |b| b.path.to_string_lossy().into_owned()),
-                original_timestamp: if b.is_some() { backup::stamp_of(v) } else { 0 },
+                original_timestamp: match (&b, t.mtime) {
+                    (Some(_), Some(m)) => backup::filetime(m),
+                    _ => 0,
+                },
             });
         }
         s

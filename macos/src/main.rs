@@ -10,6 +10,7 @@ mod docking;
 mod edit;
 mod encoding;
 mod fileops;
+mod filestatus;
 mod finder;
 mod funclist;
 mod incsearch;
@@ -94,6 +95,7 @@ struct Tab {
     lost: bool,
     ro: bool,
     lang: Option<String>,
+    mtime: Option<std::time::SystemTime>,
 }
 
 #[derive(Default)]
@@ -1026,6 +1028,23 @@ define_class!(
     }
 
     impl App {
+        #[unsafe(method(applicationDidBecomeActive:))]
+        fn did_become_active(&self, _n: &NSNotification) {
+            self.schedule_file_status_activated();
+        }
+
+        #[unsafe(method(fileStatusCheckActivated:))]
+        fn file_status_check_activated(&self, _s: Option<&AnyObject>) {
+            self.file_status_activated();
+        }
+
+        #[unsafe(method(fileStatusCheckCurrent:))]
+        fn file_status_check_current(&self, _s: Option<&AnyObject>) {
+            self.file_status_tab_switched();
+        }
+    }
+
+    impl App {
         #[unsafe(method(showIncrementalSearch:))]
         fn show_incremental_search_action(&self, _s: Option<&AnyObject>) {
             self.show_incremental_search();
@@ -1266,6 +1285,7 @@ define_class!(
             self.update_status();
             self.doc_list_reload();
             self.function_list_reload();
+            self.schedule_file_status_check();
         }
     }
 );
@@ -1647,7 +1667,7 @@ impl App {
                 format!("new {}", self.ivars().untitled.get())
             }
         };
-        backup::file_loaded(&view, path.as_deref());
+        let mtime = path.as_deref().and_then(filestatus::stamp);
         let item = NSTabViewItem::new();
         item.setView(Some(&view));
         self.ivars().tabs.borrow_mut().push(Tab {
@@ -1660,6 +1680,7 @@ impl App {
             lost,
             ro: false,
             lang: None,
+            mtime,
         });
         let last = self.ivars().tabs.borrow().len() - 1;
         self.apply_udl_at(last);
@@ -1731,9 +1752,9 @@ impl App {
         let Some(t) = self.tab(i) else { return };
         let (text, lost) = encoding::decode(b, e);
         sci::reload(&t.view, &text);
-        backup::file_loaded(&t.view, t.path.as_deref());
         if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
             t.lost = lost;
+            t.mtime = t.path.as_deref().and_then(filestatus::stamp);
         }
         sci::set_eol_mode(
             &t.view,
@@ -1808,7 +1829,6 @@ impl App {
             return false;
         };
         self.drop_backup(&tab.view);
-        backup::file_loaded(&tab.view, Some(&path));
         let renamed = tab.path.as_deref() != Some(&path);
         if renamed {
             self.recent_saved_as(tab.path.as_deref(), &path);
@@ -1823,6 +1843,7 @@ impl App {
             t.enc = enc;
             t.enc_dirty = false;
             t.lost = false;
+            t.mtime = filestatus::stamp(&path);
         }
         sci::set_save_point(&tab.view);
         if renamed {
