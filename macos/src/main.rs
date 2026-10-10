@@ -22,6 +22,8 @@ mod incsearch;
 mod l10n;
 mod lang;
 mod language;
+mod large_file;
+mod links;
 mod macros;
 mod mark;
 mod panel;
@@ -234,6 +236,7 @@ define_class!(
             self.autoc_notify(scn);
             backup::notify(scn);
             self.views_notify(scn);
+            self.links_notify(scn);
             if h.code == sci::SCN_SAVEPOINTREACHED || h.code == sci::SCN_SAVEPOINTLEFT {
                 self.refresh_labels();
             }
@@ -652,6 +655,13 @@ define_class!(
         #[unsafe(method(summary:))]
         fn summary_action(&self, _s: Option<&AnyObject>) {
             self.summary();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(addHotSpot:))]
+        fn add_hot_spot_action(&self, _s: Option<&AnyObject>) {
+            self.add_hot_spots();
         }
     }
 
@@ -1821,6 +1831,7 @@ impl App {
         let enc = if path.is_none() && text.is_empty() { p.new_doc_enc() } else { enc };
         let view = sci::new_view();
         sci::set_delegate(&view, self);
+        let large = self.open_large(&view, path.as_deref());
         sci::set_bytes(&view, text);
         sci::set_eol_mode(
             &view,
@@ -1829,6 +1840,7 @@ impl App {
         let file_ro = path.as_deref().is_some_and(edit_extras::file_read_only);
         sci::set_read_only(&view, file_ro || self.ivars().replacing.get());
         let lang = match path.as_deref() {
+            Some(_) if large => None,
             Some(p) => lang::language_for_path(cfg(), p),
             None => prefs::new_doc_language(),
         };

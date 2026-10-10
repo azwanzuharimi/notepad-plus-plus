@@ -200,6 +200,18 @@ prefs! {
     insert_tag: bool = false => "auto-insert" "htmlXmlTag",
     url_style: i64 = 2 => "URL" "",
     uri_schemes: String = URI_SCHEMES.into() => "uriCustomizedSchemes" "",
+    word_char_default: bool = true => "wordCharList" "useDefault",
+    word_chars_added: String = String::new() => "wordCharList" "charsAdded",
+    delim_left: i64 = 40 => "delimiterSelection" "leftmostDelimiter",
+    delim_right: i64 = 41 => "delimiterSelection" "rightmostDelimiter",
+    delim_doc: bool = false => "delimiterSelection" "delimiterSelectionOnEntireDocument",
+    large_mb: i64 = 200 => "largeFileRestriction" "fileSizeMB",
+    large_on: bool = true => "largeFileRestriction" "isEnabled",
+    large_autoc: bool = false => "largeFileRestriction" "allowAutoCompletion",
+    large_brace: bool = false => "largeFileRestriction" "allowBraceMatch",
+    large_smart: bool = false => "largeFileRestriction" "allowSmartHilite",
+    large_link: bool = false => "largeFileRestriction" "allowClickableLink",
+    large_nowrap: bool = true => "largeFileRestriction" "deactivateWordWrap",
     search_engine: i64 = 2 => "searchEngine" "searchEngineChoice",
     search_engine_custom: String = String::new() => "searchEngine" "searchEngineCustom",
     auto_detect: String = "yes".into() => "Auto-detection" "",
@@ -1081,6 +1093,8 @@ pub fn apply_editor(v: &NSView, lang: &str, c: &crate::config::Config) {
     }
     sci::setup_fold(v, c, lang);
     sci::setup_tabs(v, lang);
+    crate::links::set_word_chars(v);
+    crate::links::add_hot_spot(v);
 }
 
 pub fn bookmark_width() -> isize {
@@ -1100,7 +1114,7 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 18] = [
+pub const PAGES: [&str; 20] = [
     "General",
     "Toolbar",
     "Editing 1",
@@ -1116,6 +1130,8 @@ pub const PAGES: [&str; 18] = [
     "Backup",
     "Auto-Completion",
     "Multi-Instance & Date",
+    "Delimiter",
+    "Performance",
     "Cloud & Link",
     "Search Engine",
     "MISC.",
@@ -1210,6 +1226,8 @@ enum Bind {
     EdgeText,
     AutocOn,
     UrlOn,
+    UrlFlag(bool),
+    Delim(&'static str),
     Detect,
     DetectBit(u8),
     Enc(i64),
@@ -2015,8 +2033,47 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
             });
         }),
         page(b, &|b, c, _| {
+            let wc = "wordCharList";
+            b.group(c, "Word character list", 560., |b, g| {
+                b.radio(g, "Use default Word character list as it is", Bind::Radio(wc, "useDefault", "yes"));
+                b.radio(
+                    g,
+                    "Add your character as part of word (don't choose it unless you know what you're doing)",
+                    Bind::Radio(wc, "useDefault", "no"),
+                );
+                b.field_at(g, 14., 360., Bind::Text(wc, "charsAdded"));
+                g.y += 28.;
+            });
+            b.group(c, "Delimiter selection settings (Cmd + Mouse double click)", 560., |b, g| {
+                b.label_at(g, "Open", 0., 40.);
+                b.field_at(g, 44., 30., Bind::Delim("leftmostDelimiter"));
+                b.label_at(g, "bla bla bla bla bla bla", 80., 160.);
+                b.field_at(g, 244., 30., Bind::Delim("rightmostDelimiter"));
+                b.label_at(g, "Close", 280., 60.);
+                g.y += 28.;
+                b.check(g, "Allow on several lines", Bind::Check("delimiterSelection", "delimiterSelectionOnEntireDocument"));
+            });
+        }),
+        page(b, &|b, c, _| {
+            let lf = "largeFileRestriction";
+            b.group(c, "Large File Restriction", 560., |b, g| {
+                b.check(g, "Enable Large File Restriction (no syntax highlighting)", Bind::Check(lf, "isEnabled"));
+                b.label_at(g, "Define Large File Size:", 0., 150.);
+                b.field_at(g, 154., 50., Bind::Num(lf, "fileSizeMB", 1, 2046));
+                b.label_at(g, "MB   (1 - 2046)", 210., 120.);
+                g.y += 30.;
+                b.check(g, "Deactivate Word Wrap globally", Bind::Check(lf, "deactivateWordWrap"));
+                b.check(g, "Allow Auto-Completion", Bind::Check(lf, "allowAutoCompletion"));
+                b.check(g, "Allow Smart Highlighting", Bind::Check(lf, "allowSmartHilite"));
+                b.check(g, "Allow Brace Match", Bind::Check(lf, "allowBraceMatch"));
+                b.check(g, "Allow URL Clickable Link", Bind::Check(lf, "allowClickableLink"));
+            });
+        }),
+        page(b, &|b, c, _| {
             b.group(c, "Clickable Link Settings", 560., |b, g| {
                 b.check(g, "Enable", Bind::UrlOn);
+                b.check(g, "No underline", Bind::UrlFlag(true));
+                b.check(g, "Enable fullbox mode", Bind::UrlFlag(false));
                 b.label(g, "URI customized schemes:", 300.);
                 b.field_at(g, 0., 520., Bind::Text("uriCustomizedSchemes", ""));
                 g.y += 28.;
@@ -2195,6 +2252,15 @@ fn refresh(app: &App) {
                 ),
                 Bind::AutocOn => set_on(c, p.autoc_action != 0),
                 Bind::UrlOn => set_on(c, p.url_style != 0),
+                Bind::UrlFlag(under) => {
+                    let st = p.url_style;
+                    set_on(c, if *under { crate::links::no_underline(st) } else { crate::links::fullbox(st) });
+                    enabled = st != 0;
+                }
+                Bind::Delim(a) => {
+                    let n = p.get("delimiterSelection", a).trim().parse::<u32>().unwrap_or(0);
+                    set_text(c, &char::from_u32(n).map(String::from).unwrap_or_default());
+                }
                 Bind::Detect => select_index(
                     c,
                     if detect & CD_ENABLED_OLD != 0 {
@@ -2472,6 +2538,21 @@ impl App {
                 x.autoc_ignore_numbers = false;
             }),
             Bind::UrlOn => update(|x| x.url_style = if on(c) { 2 } else { 0 }),
+            Bind::UrlFlag(under) => update(|x| {
+                let st = x.url_style;
+                let (mut nu, mut fb) = (crate::links::no_underline(st), crate::links::fullbox(st));
+                if under {
+                    nu = on(c);
+                } else {
+                    fb = on(c);
+                }
+                x.url_style = crate::links::url_style(st != 0, nu, fb);
+            }),
+            Bind::Delim(a) => {
+                if let Some(ch) = txt.chars().next().filter(|ch| (1..=255).contains(&(*ch as u32))) {
+                    update(|x| x.set("delimiterSelection", a, &(ch as u32).to_string()));
+                }
+            }
             Bind::Detect => {
                 let flags = detect_bits(&p.auto_detect) & (CD_AUTO_UPDATE | CD_GO2END);
                 let bits = match idx() {
@@ -2642,6 +2723,7 @@ mod tests {
             "struct NewDocDefaultSettings final",
             "class MatchedPairConf final",
             "struct PrintSettings final",
+            "struct LargeFileRestriction final",
         ]
         .iter()
         .map(|b| {
@@ -2676,6 +2758,8 @@ mod tests {
             ("dir_followCurrent", "0"),
             ("autoc_both", "3"),
             ("urlUnderLineFg", "2"),
+            ("'('", "40"),
+            ("')'", "41"),
             ("se_google", "2"),
             ("cdEnabledNew", "yes"),
             ("bak_none", "0"),
@@ -2768,6 +2852,16 @@ mod tests {
             ("triggerFromNbChar", "_autocFromLen"),
             ("autoCIgnoreNumbers", "_autocIgnoreNumbers"),
             ("insertSelectedItemUseENTER", "_autocInsertSelectedUseENTER"),
+            ("useDefault", "_isWordCharDefault"),
+            ("leftmostDelimiter", "_leftmostDelimiter"),
+            ("rightmostDelimiter", "_rightmostDelimiter"),
+            ("delimiterSelectionOnEntireDocument", "_delimiterSelectionOnEntireDocument"),
+            ("isEnabled", "_isEnabled"),
+            ("allowAutoCompletion", "_allowAutoCompletion"),
+            ("allowBraceMatch", "_allowBraceMatch"),
+            ("allowSmartHilite", "_allowSmartHilite"),
+            ("allowClickableLink", "_allowClickableLink"),
+            ("deactivateWordWrap", "_deactivateWordWrap"),
             ("insertSelectedItemUseTAB", "_autocInsertSelectedUseTAB"),
             ("autoCBrief", "_autocBrief"),
             ("funcParams", "_funcParams"),
@@ -2790,6 +2884,7 @@ mod tests {
             "defaultDirPath",
             "lastUsedDirPath",
             "searchEngineCustom",
+            "charsAdded",
             "dir",
             "headerLeft",
             "headerMiddle",
@@ -2806,6 +2901,11 @@ mod tests {
         for (g, a) in Prefs::KEYS {
             // toolbar.rs checks the _tbIconInfo defaults.
             if *g == "ToolBar" && *a != "visible" {
+                continue;
+            }
+            // NPP_STYLING_FILESIZE_LIMIT_DEFAULT is 200 MB.
+            if *a == "fileSizeMB" {
+                assert_eq!(p.get(g, a), "200");
                 continue;
             }
             if zero.contains(a) {
