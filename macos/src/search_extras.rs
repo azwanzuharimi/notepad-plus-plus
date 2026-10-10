@@ -395,7 +395,7 @@ fn next_bookmark(v: &NSView, forward: bool) {
 }
 
 // Selection text; with no selection, selects the word at the caret first (getSelectedTextToWChar).
-fn word_selection(v: &NSView) -> String {
+pub(crate) fn word_selection(v: &NSView) -> String {
     let (mut s, mut e) = sci::selection(v);
     if s == e {
         let caret = sci::send(v, SCI_GETCURRENTPOS, 0, 0);
@@ -643,6 +643,7 @@ pub fn search_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained
             "b",
             cmd | opt,
         ),
+        crate::mark::mark_item(mtm, t),
         NSMenuItem::separatorItem(mtm),
         nested(
             mtm,
@@ -654,7 +655,10 @@ pub fn search_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained
             ],
         ),
         NSMenuItem::separatorItem(mtm),
-        nested(
+    ]
+    .into_iter()
+    .chain(crate::mark::style_menus(mtm, t))
+    .chain([nested(
             mtm,
             "Bookmark",
             vec![
@@ -674,8 +678,8 @@ pub fn search_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained
                 c("Remove Non-Bookmarked Lines", REMOVE_UNMARKED, "", none),
                 c("Inverse Bookmarks", INVERSE_MARKS, "", none),
             ],
-        ),
-    ]
+        )])
+    .collect()
 }
 
 #[cfg(test)]
