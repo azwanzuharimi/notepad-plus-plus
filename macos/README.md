@@ -28,6 +28,16 @@ Not affiliated with the Notepad++ project.
 - View > Monitoring (tail -f) makes the tab read-only, checks the file every 250 ms, and reloads it and goes to the end when it changes. Monitoring stops when the file is deleted or renamed. The monitoring state is not saved in the session.
 - View > Post-It (F12) hides the tab bar, the status bar, and the window title, and keeps the window on top. The macOS menu bar stays.
 - View > Distraction Free Mode uses full screen, Post-It, no panels, and a text column with a margin of a quarter of the screen width on each side.
+
+2026-10-10 (Print):
+
+- File > Print... (Cmd+P) shows the macOS print panel. File > Print Now prints with no panel, with the printer and paper of the last Print.... Each page is drawn by Scintilla `SCI_FORMATRANGEFULL`, as in Notepad++ `Printer.cpp`.
+- When text is selected, the panel shows the Selection choice, and it is on at first, as in Notepad++. Print Now prints the whole document.
+- Settings > Preferences > Print has the Notepad++ controls: Color Options (`SCI_SETPRINTCOLOURMODE`), Margin Setting in mm, Print line number, Print formfeed as page break, and the Header and Footer parts with font name, size, Bold, Italic and the Variable list with Add. They are stored in `<GUIConfig name="Print" ...>` of `config.xml`.
+- Header and footer variables: `$(SHORT_DATE)`, `$(LONG_DATE)`, `$(TIME)` (macOS date and time formats), `$(CURRENT_PRINTING_PAGE)`, and the Run menu variables such as `$(FULL_CURRENT_PATH)` and `$(FILE_NAME)`. As in Notepad++, only the first `$(SHORT_DATE)`, `$(LONG_DATE)`, `$(TIME)` and page variable of a part changes.
+- An empty document prints nothing, as in Notepad++.
+- Not done: right-to-left header and footer text.
+
 2026-10-10 (session snapshot and backup):
 
 - Session snapshot and periodic backup is on by default, every 7 seconds, as in Notepad++. Each modified tab, and each untitled tab with text, is written to `backup/<name>@<YYYY-MM-DD_HHMMSS>` in the settings folder, in the tab encoding and line ends. Only text that changed after the last backup is written. Each write goes to a temporary file first, so a failed write keeps the old backup. The timer also runs while a dialog shows. Then `session.xml` is written with the Notepad++ `backupFilePath` and `originalFileLastModifTimestamp` attributes.
@@ -58,7 +68,7 @@ Not affiliated with the Notepad++ project.
 - Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
 - Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
 - `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page sets them.
-- Not done: the General page (it has only Localization), the Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+- Not done: the General page (it has only Localization), the Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
 
 2026-10-10 (User Defined Languages):
 

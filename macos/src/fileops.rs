@@ -125,6 +125,11 @@ pub fn file_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
     ]
     .into_iter()
     .chain(crate::session::session_menu(mtm, t))
+    .chain([
+        NSMenuItem::separatorItem(mtm),
+        item(mtm, "Print...", sel!(filePrint:), "p", t),
+        item(mtm, "Print Now", sel!(filePrintNow:), "", t),
+    ])
     .collect()
 }
 
