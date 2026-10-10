@@ -435,30 +435,26 @@ fn decode_cp(b: &[u8], cp: u32) -> (Vec<u8>, bool) {
         unsafe { CFRelease(s) };
         Some(())
     };
-    let (mut out, mut lost, mut rest) = (vec![], false, b);
-    // One bad sequence makes CoreFoundation reject all bytes, so decode the longest good run and skip one byte.
-    while to_utf8(rest, &mut out).is_none() {
-        let mut ends = vec![0];
-        let mut i = 0;
-        while i < rest.len() {
-            i += if lead_byte(cp, rest[i]) { 2 } else { 1 };
-            ends.push(i.min(rest.len()));
-        }
-        let (mut lo, mut hi) = (0, ends.len() - 1);
-        while lo < hi {
-            let mid = (lo + hi).div_ceil(2);
-            match cf_string(&rest[..ends[mid]], e) {
-                Some(s) => {
-                    unsafe { CFRelease(s) };
-                    lo = mid;
-                }
-                None => hi = mid - 1,
+    let (mut out, mut lost, mut pos, mut step) = (vec![], false, 0, 1);
+    // One bad sequence makes CoreFoundation reject all bytes, so decode growing runs and skip each bad byte.
+    while pos < b.len() {
+        let mut end = pos;
+        for _ in 0..step {
+            if end == b.len() {
+                break;
             }
+            end = (end + if lead_byte(cp, b[end]) { 2 } else { 1 }).min(b.len());
         }
-        to_utf8(&rest[..ends[lo]], &mut out);
-        out.extend("\u{FFFD}".as_bytes());
-        lost = true;
-        rest = &rest[ends[lo] + 1..];
+        if to_utf8(&b[pos..end], &mut out).is_some() {
+            pos = end;
+            step *= 2;
+        } else if step > 1 {
+            step = 1;
+        } else {
+            out.extend("\u{FFFD}".as_bytes());
+            lost = true;
+            pos += 1;
+        }
     }
     (out, lost)
 }
@@ -790,6 +786,11 @@ mod tests {
         assert_eq!(
             decode(&cp_bytes(JA, 936), Enc::Cp(936)),
             (JA.as_bytes().to_vec(), false)
+        );
+        let (text, lost) = decode(&b"a\xA0".repeat(10_000), Enc::Cp(932));
+        assert_eq!(
+            (text, lost),
+            ("a\u{FFFD}".repeat(10_000).into_bytes(), true)
         );
     }
 
