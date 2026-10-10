@@ -227,6 +227,11 @@ Not affiliated with the Notepad++ project.
 - Edit > EOL Conversion: Windows (CR LF), Unix (LF), and Macintosh (CR).
 - Files open with the Notepad++ detection order: BOM, then `uchardet` (built from `PowerEditor/src/uchardet`), then the UTF-8 and UTF-16 rules. The first line end sets the EOL mode. New documents are UTF-8 with CR LF.
 - A status bar shows the language, length and lines, Ln, Col, Pos or Sel, the EOL type, the encoding, and INS or OVR.
+- Status bar clicks, as in Notepad++: click INS/OVR to toggle overtype. Double-click Ln/Col to open Go To, or length to open Summary. Double-click or right-click the language, EOL, or encoding part to open the Language, EOL Conversion, or Encoding menu.
+- The window title is `<full path> - Notepad++`, with `*` when the tab is modified. "Show only filename in title bar" (Preferences > MISC., `titleBar short`) shows the file name only. The title bar also shows the macOS edited dot and the file proxy icon.
+- Preferences > General > Status Bar > Hide (`StatusBar` show/hide) hides the status bar at once.
+- Go To has the Line and Offset modes of Notepad++, with "You are here", "You can't go further than", Go, and "I'm going nowhere".
+- Cmd + mouse wheel zooms in and out (Ctrl + wheel in Notepad++).
 - Code page conversion uses macOS CoreFoundation. "ANSI" is Windows-1252, because macOS has no system ANSI code page.
 - Save keeps the encoding and the BOM of the tab. If the encoding cannot store some characters, an alert shows before the write: Save as UTF-8 instead, Save anyway (writes `?`), or Cancel. Notepad++ replaces such characters silently.
 - "Encode in" a character set reads the file bytes from disk again in that encoding. This also occurs when the current encoding is a character set. If the tab has unsaved changes, the Notepad++ "Save Current Modification" question shows first. Between UTF-8, UTF-8-BOM, and the UTF-16 items, only the save encoding changes, as in Notepad++. To or from ANSI, the same bytes are read again in the new encoding, as in Notepad++.
@@ -234,7 +239,7 @@ Not affiliated with the Notepad++ project.
 - In a single byte character set, a byte with no character opens as U+00XX, or as U+F7XX when a real byte already gives U+00XX. These bytes save back unchanged.
 - OEM 720 is in the menu but disabled, because CoreFoundation does not support it. OEM 858 uses the OEM 850 table with the euro sign at 0xD5.
 - UTF-16 LE without a BOM uses a simple test (more than half of the high bytes are zero) in place of the Windows `IsTextUnicode` function.
-- The status bar shows only the single selection forms (Pos and Sel: N | M), not the rectangular or multiple selection forms.
+- The status bar shows the Notepad++ selection forms: `Sel: N | M`, `Sel: RxW = N` or `RxW -> N` for a rectangle, and `Sel K : N | M` for multiple selections.
 - Replace in Files writes each file back in its detected encoding.
 
 - Search menu: Find, Replace, Find Next, Find Previous, Find in Files, and Go to Line.

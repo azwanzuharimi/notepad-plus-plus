@@ -121,6 +121,7 @@ fn main() {
         .compile("scintilla");
     base()
         .include("../scintilla/cocoa")
+        .define("SCROLL_WHEEL_MAGNIFICATION", None)
         .flag("-fobjc-arc")
         .files(files("../scintilla/cocoa", ".mm"))
         .compile("scintilla_cocoa");

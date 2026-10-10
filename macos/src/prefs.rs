@@ -210,6 +210,8 @@ prefs! {
     toolbar_custom_color: i64 = 0 => "ToolBar" "fluentCustomColor",
     toolbar_mono: bool = false => "ToolBar" "fluentMono",
     toolbar_icons: String = "standard".into() => "ToolBar" "",
+    status_bar: Show = Show(true) => "StatusBar" "",
+    short_title: bool = false => "titleBar" "short",
 }
 
 // NppGUI::AutocStatus.
@@ -1230,6 +1232,7 @@ enum Bind {
     BackupBrowse,
     TbHide,
     TbColor,
+    StatusHide,
 }
 
 struct Ctl {
@@ -1417,6 +1420,8 @@ fn indent_langs() -> Vec<(String, String)> {
 fn general_page(b: &mut Build, c: &mut Col, _: &mut Col) {
     b.label_at(c, "Localization", 0., 100.);
     c.put(&crate::l10n::popup(b.mtm), 104., 220., 26.);
+    c.y += 40.;
+    b.group(c, "Status Bar", 200., |b, g| b.check(g, "Hide", Bind::StatusHide));
 }
 
 // PrintSubDlg; the Add button inserts the variable in the header or footer field that has the focus.
@@ -2073,6 +2078,7 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
                     Bind::DetectBit(CD_GO2END),
                 );
             });
+            b.check(c, "Show only filename in title bar", Bind::Check("titleBar", "short"));
         }),
     ]
 }
@@ -2254,6 +2260,7 @@ fn refresh(app: &App) {
                 }
                 Bind::BackupBrowse => enabled = p.backup_action != 0 && p.backup_use_dir,
                 Bind::TbHide => set_on(c, !p.toolbar_visible),
+                Bind::StatusHide => set_on(c, !p.status_bar.0),
                 Bind::TbColor => {
                     let [r, g, b] = crate::toolbar::colorref(p.toolbar_custom_color).map(|x| x as f64 / 255.);
                     if let Some(well) = c.downcast_ref::<objc2_app_kit::NSColorWell>() {
@@ -2397,6 +2404,8 @@ impl App {
         self.apply_view_all();
         self.backup_settings_changed();
         crate::toolbar::apply();
+        self.apply_status_bar();
+        self.update_title();
     }
 
     pub(crate) fn pref_changed(&self, c: &NSControl) {
@@ -2580,6 +2589,7 @@ impl App {
                 update(|x| x.backup_dir = path.to_string());
             }
             Bind::TbHide => update(|x| x.toolbar_visible = !on(c)),
+            Bind::StatusHide => update(|x| x.status_bar = Show(!on(c))),
             Bind::TbColor => {
                 let space = objc2_app_kit::NSColorSpace::sRGBColorSpace();
                 let color = c.downcast_ref::<objc2_app_kit::NSColorWell>().map(|w| w.color());
@@ -2784,6 +2794,8 @@ mod tests {
             ("customizedFormat", "_dateTimeFormat"),
             ("reverseDefaultOrder", "_dateTimeReverseDefaultOrder"),
             ("visible", "_toolbarShow"),
+            ("StatusBar", "_statusBarShow"),
+            ("short", "_shortTitlebar"),
         ];
         let no_default = [
             "edgeMultiColumnPos",
