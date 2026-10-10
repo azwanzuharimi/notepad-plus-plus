@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::search_extras::{icon_bytes, BOOKMARK_MARGIN};
-use crate::{docking, sci, App, STATUS_H};
+use crate::{docking, sci, App};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{msg_send, sel, DefinedClass};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSControlStateValueOff, NSControlStateValueOn,
+    NSControlStateValueOff, NSControlStateValueOn,
     NSFloatingWindowLevel, NSMenuItem, NSNormalWindowLevel, NSTabViewItem, NSTabViewType, NSView,
     NSWindowStyleMask, NSWindowTitleVisibility,
 };
@@ -458,28 +458,7 @@ impl App {
 
     // The status bar labels hide, and the view above them takes their place.
     fn show_status_bar(&self, show: bool) {
-        let Some(content) = self.ivars().window.get().and_then(|w| w.contentView()) else {
-            return;
-        };
-        let labels = self.ivars().status.get().cloned().unwrap_or_default();
-        let d = if show { STATUS_H } else { -STATUS_H };
-        for v in content.subviews().iter() {
-            if labels.iter().any(|l| std::ptr::eq::<NSView>(&****l, &*v)) {
-                v.setHidden(!show);
-                continue;
-            }
-            if v.isHidden() {
-                continue;
-            }
-            let mut f = v.frame();
-            f.origin.y += d;
-            if v.autoresizingMask()
-                .contains(NSAutoresizingMaskOptions::ViewHeightSizable)
-            {
-                f.size.height -= d;
-            }
-            v.setFrame(f);
-        }
+        self.set_status_bar(show && crate::prefs::with(|p| p.status_bar.0));
     }
 
     // Notepad_plus::postItToggle: no tab bar, no status bar, no title, and always on top.

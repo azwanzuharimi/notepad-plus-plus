@@ -3,6 +3,7 @@ mod autoc;
 mod backup;
 mod binary;
 mod charpanel;
+mod chrome;
 mod cliphistory;
 mod comment;
 mod column;
@@ -51,7 +52,7 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControl, NSControlStateValueOff,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSClickGestureRecognizer, NSControl, NSControlStateValueOff,
     NSControlStateValueOn, NSEvent, NSMenu, NSMenuDelegate, NSMenuItem, NSModalResponseOK,
     NSOpenPanel, NSOutlineView, NSOutlineViewDataSource, NSSplitView, NSTableColumn,
     NSTableView, NSTableViewDataSource, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
@@ -472,24 +473,29 @@ define_class!(
 
         #[unsafe(method(goToLine:))]
         fn go_to_line(&self, _s: Option<&AnyObject>) {
-            let Some(v) = self.editor() else { return };
-            let (cur, max) = sci::line_info(&v);
-            let a = NSAlert::new(self.mtm());
-            a.setMessageText(&ns("Go To..."));
-            a.setInformativeText(&ns(&format!("You are here: {cur}\nYou can't go further than: {max}")));
-            let f = NSTextField::textFieldWithString(&NSString::new(), self.mtm());
-            f.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(200., 24.)));
-            f.setPlaceholderString(Some(&ns("You want to go to")));
-            a.setAccessoryView(Some(&f));
-            a.addButtonWithTitle(&ns("Go"));
-            a.addButtonWithTitle(&ns("Cancel"));
-            a.window().setInitialFirstResponder(Some(&f));
-            if a.runModal() == NSAlertFirstButtonReturn {
-                if let Ok(n) = panel::text(&f).trim().parse::<isize>() {
-                    sci::goto_line(&v, n.min(max));
-                }
-            }
-            self.focus();
+            self.go_to();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(goToMode:))]
+        fn go_to_mode_action(&self, b: &NSButton) {
+            self.go_to_mode(b);
+        }
+
+        #[unsafe(method(statusClick:))]
+        fn status_click_action(&self, g: &NSClickGestureRecognizer) {
+            self.status_click(g);
+        }
+
+        #[unsafe(method(statusDoubleClick:))]
+        fn status_double_click_action(&self, g: &NSClickGestureRecognizer) {
+            self.status_double_click(g);
+        }
+
+        #[unsafe(method(statusRightClick:))]
+        fn status_right_click_action(&self, g: &NSClickGestureRecognizer) {
+            self.status_menu(g);
         }
     }
 
@@ -1546,6 +1552,7 @@ impl App {
             right = x;
         }
         let _ = self.ivars().status.set(status);
+        self.add_status_clicks();
         split.setPosition_ofDividerAtIndex(split.frame().size.height, 0);
         w.center();
         w.makeKeyAndOrderFront(None);
@@ -1553,6 +1560,7 @@ impl App {
         let _ = self.ivars().tab_view.set(tv);
         let _ = self.ivars().split.set(split);
         let _ = self.ivars().results.set((results, markings));
+        self.apply_status_bar();
     }
 
     fn editor(&self) -> Option<Retained<NSView>> {
@@ -1966,12 +1974,9 @@ impl App {
         let v = &t.view;
         prefs::line_number_width(v);
         let lang = language::tab_language(&t);
-        let (ln, col, pos, sel) = sci::position_info(v);
+        let (ln, col, _, _) = sci::position_info(v);
         let c = |n: isize| search::commafy(n as usize);
-        let sel = match sel {
-            Some((chars, lines)) => format!("Sel: {} | {}", c(chars), c(lines)),
-            None => format!("Pos: {}", c(pos)),
-        };
+        let sel = chrome::selection_status(v);
         let texts = [
             self.udl_status(&t)
                 .unwrap_or_else(|| lang::long_name(lang.map_or("normal", |l| l.name.as_str()))),
@@ -1988,6 +1993,7 @@ impl App {
         for (l, s) in labels.iter().zip(texts) {
             l.setStringValue(&ns(&s));
         }
+        self.update_title();
     }
 
     fn refresh_title(&self, i: usize) {
@@ -2001,6 +2007,7 @@ impl App {
             let mark = if self.dirty(t) { "*" } else { "" };
             t.item.setLabel(&NSString::from_str(&format!("{mark}{}", t.name)));
         }
+        self.update_title();
         self.doc_list_reload();
     }
 

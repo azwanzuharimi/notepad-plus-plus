@@ -17,7 +17,6 @@ const SCI_CLEARALL: u32 = 2004;
 const SCI_GETREADONLY: u32 = 2140;
 const SCI_GETCURRENTPOS: u32 = 2008;
 const SCI_SETUNDOCOLLECTION: u32 = 2012;
-const SCI_GOTOLINE: u32 = 2024;
 const SCI_GETSELECTIONSTART: u32 = 2143;
 const SCI_GETSELECTIONEND: u32 = 2145;
 const SCI_GETLINECOUNT: u32 = 2154;
@@ -251,10 +250,6 @@ pub fn line_info(v: &NSView) -> (isize, isize) {
         send(v, SCI_LINEFROMPOSITION, pos as usize, 0) + 1,
         send(v, SCI_GETLINECOUNT, 0, 0),
     )
-}
-
-pub fn goto_line(v: &NSView, line: isize) {
-    send(v, SCI_GOTOLINE, (line - 1).max(0) as usize, 0);
 }
 
 // Search results view: the Notepad++ searchResult lexer reads the match offsets through @MarkingsStruct.
