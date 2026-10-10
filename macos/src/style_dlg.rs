@@ -2,7 +2,7 @@
 use crate::config::{app_support_dir, Config};
 use crate::panel::{on, set_on, Form};
 use crate::styler::{self, Doc, El, Override, Src};
-use crate::{item, lang, nested, ns, sci, App};
+use crate::{item, lang, mark, nested, ns, sci, App};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
@@ -19,7 +19,10 @@ use objc2_foundation::{
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
 
-const SCI_SETWHITESPACEFORE: u32 = 2084;
+const SCI_GETPROPERTY: u32 = 4008;
+const SCI_SETPROPERTY: u32 = 4004;
+const SCI_SETMARGINWIDTHN: u32 = 2242;
+const SCI_COLOURISE: u32 = 4003;
 // NppConstants.h fontSizeStrs.
 const FONT_SIZES: [&str; 17] = [
     "", "5", "6", "7", "8", "9", "10", "11", "12", "14", "16", "18", "20", "22", "24", "26", "28",
@@ -70,6 +73,7 @@ pub fn settings_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retain
     ]
 }
 
+#[derive(Default)]
 struct St {
     themes: Vec<(String, Src)>,
     theme: usize,
@@ -135,7 +139,7 @@ impl St {
             .chain(
                 self.lexers
                     .iter()
-                    .map(|&i| lexers[i].get("desc").unwrap_or("").to_string()),
+                    .filter_map(|&i| Some(lexers.get(i)?.get("desc").unwrap_or("").to_string())),
             )
             .collect()
     }
@@ -167,7 +171,7 @@ struct Ui {
 struct Ivars {
     app: OnceCell<Retained<App>>,
     ui: OnceCell<Ui>,
-    st: RefCell<Option<St>>,
+    st: RefCell<St>,
     rows: RefCell<Vec<String>>,
     filling: Cell<bool>,
 }
@@ -232,9 +236,12 @@ define_class!(
             let i = b.tag() as usize;
             let set = on(b);
             self.with(|s| {
-                s.go[i] = set;
+                if let Some(g) = s.go.get_mut(i) {
+                    *g = set;
+                }
                 s.changed = true;
             });
+            self.ui().save.setEnabled(true);
             self.apply();
         }
 
@@ -443,24 +450,12 @@ impl StyleDlg {
         f.label("Font size:", 620., 130., 70.);
         let size = popup(690., 128., 60., sel!(sizeChanged:));
         fill_popup(&size, &FONT_SIZES.map(String::from));
-        let font_style = [("Bold", 1), ("Italic", 2), ("Underline", 4)]
-            .iter()
-            .enumerate()
-            .map(|(i, (n, bit))| {
-                let b = f.check(
-                    n,
-                    500.,
-                    128. + 22. * i as f64,
-                    110.,
-                    t,
-                    sel!(fontStyleChanged:),
-                );
-                b.setTag(*bit);
-                b
-            })
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
+        let check = |n: &str, i: f64, bit: isize| {
+            let b = f.check(n, 500., 128. + 22. * i, 110., t, sel!(fontStyleChanged:));
+            b.setTag(bit);
+            b
+        };
+        let font_style = [check("Bold", 0., 1), check("Italic", 1., 2), check("Underline", 2., 4)];
         let kw_l1 = NSTextField::labelWithString(&ns("Default keywords"), mtm);
         f.place(&kw_l1, 290., 204., 200., 18.);
         let kw_l2 = NSTextField::labelWithString(&ns("User-defined keywords"), mtm);
@@ -527,11 +522,12 @@ impl StyleDlg {
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut St) -> R) -> R {
-        f(self.ivars().st.borrow_mut().as_mut().unwrap())
+        f(&mut self.ivars().st.borrow_mut())
     }
 
     // Starts a session of the dialog from the styles in use.
     fn open(&self) {
+        NSColorPanel::sharedColorPanel(self.mtm()).setContinuous(false);
         let dir = app_support_dir();
         let themes = styler::theme_list(&styler::user_themes(dir.as_deref()));
         let st = styler::with_current(|c| {
@@ -549,7 +545,7 @@ impl StyleDlg {
                 changed: false,
             }
         });
-        *self.ivars().st.borrow_mut() = Some(st);
+        *self.ivars().st.borrow_mut() = st;
         self.fill_themes();
         self.fill_langs();
         self.ui().save.setEnabled(false);
@@ -704,8 +700,12 @@ impl StyleDlg {
     // WordStyleDlg::switchToTheme.
     fn switch_theme(&self) {
         let i = self.ui().theme.indexOfSelectedItem().max(0) as usize;
-        let (dirty, old, new) =
-            self.with(|s| (s.theme_dirty, s.src.clone(), s.themes[i].1.clone()));
+        let Some((dirty, old, new)) = self.with(|s| {
+            let t = s.themes.get(i)?.1.clone();
+            Some((s.theme_dirty, s.src.clone(), t))
+        }) else {
+            return;
+        };
         if dirty {
             let msg = "Unsaved changes are about to be discarded!\nDo you want to save your changes before switching themes?";
             let title = Path::new(&old.file_name())
@@ -820,27 +820,35 @@ impl StyleDlg {
     }
 }
 
+// sci::setup_results styles; the searchResult lexer gets its match list property again.
+fn restyle_results(v: &NSView, c: &Config) {
+    let key = c"@MarkingsStruct";
+    let n = sci::send(v, SCI_GETPROPERTY, key.as_ptr() as usize, 0).max(0) as usize;
+    let mut val = vec![0u8; n + 1];
+    sci::send(v, SCI_GETPROPERTY, key.as_ptr() as usize, val.as_mut_ptr() as isize);
+    sci::apply_language(v, c, c.languages.iter().find(|l| l.name == "searchResult"));
+    sci::send(v, SCI_SETMARGINWIDTHN, 0, 0);
+    sci::send(v, SCI_SETPROPERTY, key.as_ptr() as usize, val.as_ptr() as isize);
+    sci::send(v, SCI_COLOURISE, 0, -1);
+}
+
 impl App {
     // Applies `c` to the open editors: Notepad++ WM_UPDATESCINTILLAS.
     pub(crate) fn restyle(&self, c: &Config) {
         let tabs = self.ivars().tabs.borrow().clone();
-        let ws = c
-            .global_styles
-            .iter()
-            .find(|s| s.name == "White space symbol")
-            .and_then(|s| s.fg);
         for t in &tabs {
             let l = match &t.lang {
                 Some(n) => c.languages.iter().find(|l| &l.name == n),
                 None => lang::language_for_path(c, t.path.as_deref().unwrap_or(Path::new(&t.name))),
             };
             sci::apply_language(&t.view, c, l);
-            self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()));
+            self.apply_view(&t.view, l.map_or("normal", |l| l.name.as_str()), c);
             sci::setup_bookmark_margin(&t.view, c);
             sci::setup_change_history(&t.view, c);
-            if let Some(ws) = ws {
-                sci::send(&t.view, SCI_SETWHITESPACEFORE, 1, ws);
-            }
+            mark::setup_indicators(&t.view, c);
+        }
+        if let Some((v, _)) = self.ivars().results.get() {
+            restyle_results(v, c);
         }
     }
 

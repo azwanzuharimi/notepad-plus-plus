@@ -120,7 +120,7 @@ pub fn load_styles(c: &mut Config, xml: &str) {
     let mut in_global = false;
     let mut in_words = false;
     loop {
-        let ev = r.read_event().expect("stylers.model.xml");
+        let Ok(ev) = r.read_event() else { break };
         let start = matches!(ev, Event::Start(_));
         let last = c.lexer_styles.last_mut().and_then(|(_, v)| v.last_mut());
         match ev {

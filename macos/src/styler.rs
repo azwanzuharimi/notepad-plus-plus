@@ -115,7 +115,7 @@ impl El {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Doc {
     pub nodes: Vec<Node>,
 }
@@ -387,7 +387,9 @@ pub fn merge_model(user: &mut Doc, model: &Doc, theme: bool) {
             None => recolour(gu.push(wm.clone()), colours),
         }
     }
-    let lu = u.first_mut("LexerStyles").unwrap();
+    let Some(lu) = u.first_mut("LexerStyles") else {
+        return;
+    };
     for lex in lm.els("LexerType") {
         let Some(name) = lex.get("name") else {
             continue;
@@ -504,8 +506,8 @@ pub fn apply_override(c: &mut Config, go: &Override) {
         .for_each(|s| override_style(s, &g, go));
 }
 
-// User ext. (getLangFromExt checks it before the language extensions) and user-defined keywords (concatToBuildKeywordList).
-pub fn apply_user_words(c: &mut Config, doc: &Doc) {
+// User ext.: getLangFromExt checks it before the language extensions.
+pub fn apply_user_exts(c: &mut Config, doc: &Doc) {
     let mut lexers = doc.lexers();
     lexers.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
     for lex in lexers.iter().rev() {
@@ -520,23 +522,6 @@ pub fn apply_user_words(c: &mut Config, doc: &Doc) {
                 if l.name == name {
                     l.exts.push(ext.clone());
                 }
-            }
-        }
-    }
-    for lex in doc.lexers() {
-        let name = lex.get("name").unwrap_or("");
-        let Some(l) = c.languages.iter_mut().find(|l| l.name == name) else {
-            continue;
-        };
-        for ws in lex.els("WordsStyle") {
-            let class = ws.get("keywordClass").unwrap_or("");
-            let words = ws.text();
-            if class.is_empty() || class.starts_with("substyle") || words.trim().is_empty() {
-                continue;
-            }
-            match l.keywords.iter_mut().find(|(k, _)| k == class) {
-                Some((_, w)) => *w = format!("{} {w}", words.trim()),
-                None => l.keywords.push((class.into(), words.trim().into())),
             }
         }
     }
@@ -575,7 +560,7 @@ pub fn build(doc: &Doc, go: &Override) -> Config {
         ..Config::default()
     };
     config::load_styles(&mut c, &doc.write());
-    apply_user_words(&mut c, doc);
+    apply_user_exts(&mut c, doc);
     apply_override(&mut c, go);
     c
 }
@@ -612,8 +597,9 @@ pub const BUILTIN: &[(&str, &str)] = themes!(
     "Zenburn",
 );
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum Src {
+    #[default]
     Stylers,
     File(PathBuf),
     Builtin(&'static str),
@@ -1143,7 +1129,7 @@ mod tests {
     }
 
     #[test]
-    fn user_ext_and_keywords() {
+    fn user_ext_and_keywords_once() {
         let mut d = model();
         {
             let lu = d.root_mut().unwrap().first_mut("LexerStyles").unwrap();
@@ -1164,15 +1150,10 @@ mod tests {
         assert_eq!(lang_of("a.foo").as_deref(), Some("python"));
         assert_eq!(lang_of("a.cpp").as_deref(), Some("python"));
         assert_eq!(lang_of("a.hpp").as_deref(), Some("cpp"));
-        let py = c.languages.iter().find(|l| l.name == "python").unwrap();
-        let kw = &py.keywords.iter().find(|k| k.0 == "instre1").unwrap().1;
-        assert!(kw.starts_with("myword other "));
-        assert!(kw.split_whitespace().any(|w| w == "lambda"));
         let s = crate::lang::setup(&c, "python");
-        assert!(s
-            .keywords
-            .iter()
-            .any(|(i, w)| *i == 0 && w.contains("myword")));
+        let kw0: Vec<&str> = s.keywords.iter().filter(|k| k.0 == 0).flat_map(|k| k.1.split_whitespace()).collect();
+        assert_eq!(kw0.iter().filter(|w| **w == "myword").count(), 1);
+        assert!(kw0.contains(&"lambda"));
     }
 
     #[test]

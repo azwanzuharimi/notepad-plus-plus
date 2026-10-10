@@ -16,8 +16,8 @@ Not affiliated with the Notepad++ project.
 - A theme that is older than `stylers.model.xml` gets the missing styles from the model, with the Default Style colours, as in Notepad++.
 - The theme choice is in `config.xml`, in `<GUIConfig name="DarkMode" lightThemeName="..." darkThemeName="..." />`, as in Notepad++ 8.x. The Global override check boxes are in `<GUIConfig name="globalOverride" ... />`.
 - Dark mode: macOS has no Notepad++ dark mode switch. When the macOS appearance is dark at start, the app uses `darkThemeName`; its default is DarkModeDefault, as in Notepad++ with dark mode on. A theme that you select in dark appearance is stored in `darkThemeName`, so your choice wins. A change of the macOS appearance shows after a restart.
-- User ext. comes before the language extensions. User-defined keywords are added to the language keywords (not for the substyle classes).
-- Not done: the Search results panel keeps its old colours until a restart; the "colorStyle" transparency attribute; `addDefaultStyles` (the app has its own fallback colours).
+- User ext. comes before the language extensions.
+- Not done: the "colorStyle" transparency attribute; `addDefaultStyles` (the app has its own fallback colours).
 2026-10-10 (panels):
 
 - View > Document List and View > Function List show docked panels with a title and a close button. A checkmark shows an open panel.

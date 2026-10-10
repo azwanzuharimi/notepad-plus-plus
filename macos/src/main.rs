@@ -1516,7 +1516,7 @@ impl App {
             .as_deref()
             .and_then(|p| lang::language_for_path(cfg(), p));
         sci::apply_language(&view, cfg(), lang);
-        self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()));
+        self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()), cfg());
         sci::setup_bookmark_margin(&view, cfg());
         sci::setup_change_history(&view, cfg());
         sci::setup_multi_selection(&view);
