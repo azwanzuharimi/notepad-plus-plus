@@ -218,7 +218,7 @@ impl App {
     }
 
     // Value of VARS[i] for the active tab, as the Notepad++ RUNCOMMAND_USER messages give it.
-    fn run_value(&self, i: usize) -> String {
+    pub(crate) fn run_value(&self, i: usize) -> String {
         let tab = self.current().and_then(|i| self.tab(i));
         let full = tab
             .as_ref()

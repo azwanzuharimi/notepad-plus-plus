@@ -13,17 +13,15 @@ const SCI_ADDTEXT: u32 = 2001;
 // Private pasteboard type for the raw bytes, like the Notepad++ "Notepad++ Binary Length" clipboard format.
 const BINARY_TYPE: &str = "org.notepad-plus-plus.binary";
 
-// Notepad_plus.rc "Paste Special" submenu without Paste HTML Content and Paste RTF Content.
+// Notepad_plus.rc "Paste Special" submenu.
 pub fn paste_special_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Retained<NSMenuItem> {
-    nested(
-        mtm,
-        "Paste Special",
-        vec![
-            tagged(mtm, "Copy Binary Content", sel!(copyBinary:), 0, t),
-            tagged(mtm, "Cut Binary Content", sel!(copyBinary:), 1, t),
-            tagged(mtm, "Paste Binary Content", sel!(pasteBinary:), 0, t),
-        ],
-    )
+    let mut items = crate::edit_extras::paste_markup_items(mtm, t);
+    items.extend([
+        tagged(mtm, "Copy Binary Content", sel!(copyBinary:), 0, t),
+        tagged(mtm, "Cut Binary Content", sel!(copyBinary:), 1, t),
+        tagged(mtm, "Paste Binary Content", sel!(pasteBinary:), 0, t),
+    ]);
+    nested(mtm, "Paste Special", items)
 }
 
 fn write(pb: &NSPasteboard, b: &[u8]) {

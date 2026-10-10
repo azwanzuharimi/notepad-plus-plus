@@ -11,6 +11,7 @@ mod context_menu;
 mod docking;
 mod docmap;
 mod edit;
+mod edit_extras;
 mod encoding;
 mod filebrowser;
 mod fileops;
@@ -724,6 +725,48 @@ define_class!(
         #[unsafe(method(copy:))]
         fn copy(&self, s: Option<&AnyObject>) {
             self.cut_or_copy(sel!(copy:), s);
+        }
+    }
+
+    impl App {
+        #[unsafe(method(insertDateTimeCustom:))]
+        fn insert_date_time_custom_action(&self, _s: Option<&AnyObject>) {
+            self.insert_date_time_custom();
+        }
+
+        #[unsafe(method(copyAllNames:))]
+        fn copy_all_names_action(&self, s: &NSMenuItem) {
+            self.copy_all_names(s.tag() == 1);
+        }
+
+        #[unsafe(method(sortLocale:))]
+        fn sort_locale_action(&self, s: &NSMenuItem) {
+            self.sort_locale(s.tag() == 1);
+        }
+
+        #[unsafe(method(pasteMarkup:))]
+        fn paste_markup_action(&self, s: &NSMenuItem) {
+            self.paste_markup(s.tag() == 1);
+        }
+
+        #[unsafe(method(onSelection:))]
+        fn on_selection_action(&self, s: &NSMenuItem) {
+            self.on_selection(s.tag());
+        }
+
+        #[unsafe(method(redactSelection:))]
+        fn redact_selection_action(&self, _s: Option<&AnyObject>) {
+            self.redact_selection();
+        }
+
+        #[unsafe(method(readOnlyAll:))]
+        fn read_only_all_action(&self, s: &NSMenuItem) {
+            self.read_only_all(s.tag() == 1);
+        }
+
+        #[unsafe(method(toggleFileReadOnly:))]
+        fn toggle_file_read_only_action(&self, _s: Option<&AnyObject>) {
+            self.toggle_file_read_only();
         }
     }
 
