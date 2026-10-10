@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::config::{Config, Style};
-use crate::lang;
 use crate::search::{Doc, Line};
+use crate::{lang, view};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -62,6 +62,39 @@ const SCI_COLOURISE: u32 = 4003;
 const SCI_SETPROPERTY: u32 = 4004;
 const SCI_SETKEYWORDS: u32 = 4005;
 const SCI_SETILEXER: u32 = 4033;
+const SCI_SETTABWIDTH: u32 = 2036;
+const SCI_SETUSETABS: u32 = 2124;
+const SCI_SETVIEWWS: u32 = 2021;
+const SCI_SETWHITESPACEFORE: u32 = 2084;
+const SCI_SETWHITESPACESIZE: u32 = 2086;
+const SCI_SETVIEWEOL: u32 = 2356;
+const SCI_SETREPRESENTATION: u32 = 2665;
+const SCI_SETREPRESENTATIONAPPEARANCE: u32 = 2766;
+const SCI_CLEARALLREPRESENTATIONS: u32 = 2770;
+const SCI_SETINDENTATIONGUIDES: u32 = 2132;
+const SCI_GETINDENTATIONGUIDES: u32 = 2133;
+const SCI_SETWRAPMODE: u32 = 2268;
+const SCI_SETWRAPVISUALFLAGS: u32 = 2460;
+const SCI_SETWRAPVISUALFLAGSLOCATION: u32 = 2462;
+const SCI_SETWRAPINDENTMODE: u32 = 2472;
+const SCI_SETZOOM: u32 = 2373;
+const SCI_MARKERDEFINE: u32 = 2040;
+const SCI_MARKERSETFORE: u32 = 2041;
+const SCI_MARKERSETBACK: u32 = 2042;
+const SCI_MARKERSETBACKSELECTED: u32 = 2292;
+const SCI_MARKERENABLEHIGHLIGHT: u32 = 2293;
+const SCI_SETFOLDMARGINCOLOUR: u32 = 2290;
+const SCI_SETFOLDMARGINHICOLOUR: u32 = 2291;
+const SCI_SETMARGINMASKN: u32 = 2244;
+const SCI_SETMARGINSENSITIVEN: u32 = 2246;
+const SCI_SETFOLDFLAGS: u32 = 2233;
+const SCI_SETAUTOMATICFOLD: u32 = 2663;
+const SC_MASK_FOLDERS: isize = 0xFE000000;
+const SC_FOLDFLAG_LINEAFTER_CONTRACTED: usize = 0x10;
+const SC_AUTOMATICFOLD_ALL: usize = 7;
+const SC_IV_LOOKFORWARD: usize = 2;
+const SC_IV_LOOKBOTH: usize = 3;
+const SC_WRAPINDENT_SAME: usize = 1;
 const STYLE_DEFAULT: usize = 32;
 const STYLE_LINENUMBER: usize = 33;
 const SC_CP_UTF8: usize = 65001;
@@ -326,5 +359,146 @@ pub fn apply_language(v: &NSView, cfg: &Config, lang: Option<&crate::config::Lan
     send(v, SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
     let w = send_str(v, SCI_TEXTWIDTH, STYLE_LINENUMBER, "_99999");
     send(v, SCI_SETMARGINWIDTHN, 0, w);
+    setup_fold(v, cfg, name);
+    setup_tabs(v, name);
+    setup_indent_guides(
+        v,
+        view::python_style_indent(name),
+        send(v, SCI_GETINDENTATIONGUIDES, 0, 0) != 0,
+    );
     send(v, SCI_COLOURISE, 0, -1);
+}
+
+const FOLD_MARGIN: usize = 3;
+// ScintillaEditView::_markersArray: fold marker numbers and the box style.
+const FOLD_MARKERS: [(usize, isize); 7] = [
+    (31, 14),
+    (30, 12),
+    (29, 9),
+    (28, 10),
+    (25, 13),
+    (26, 15),
+    (27, 11),
+];
+
+// Fold margin, box markers, fold colours and fold properties as ScintillaEditView sets them.
+pub fn setup_fold(v: &NSView, cfg: &Config, lang: &str) {
+    for (k, val) in view::fold_props(lang) {
+        let (k, val) = (CString::new(k).unwrap(), CString::new(val).unwrap());
+        send(
+            v,
+            SCI_SETPROPERTY,
+            k.as_ptr() as usize,
+            val.as_ptr() as isize,
+        );
+    }
+    let global = |name: &str| cfg.global_styles.iter().find(|s| s.name == name);
+    let fold = global("Fold");
+    let (fg, bg) = (
+        fold.and_then(|s| s.bg).unwrap_or(0xFFFFFF),
+        fold.and_then(|s| s.fg).unwrap_or(0x808080),
+    );
+    let active = global("Fold active").and_then(|s| s.fg).unwrap_or(0x0000FF);
+    for (n, m) in FOLD_MARKERS {
+        send(v, SCI_MARKERDEFINE, n, m);
+        send(v, SCI_MARKERSETFORE, n, fg);
+        send(v, SCI_MARKERSETBACK, n, bg);
+        send(v, SCI_MARKERSETBACKSELECTED, n, active);
+    }
+    send(v, SCI_MARKERENABLEHIGHLIGHT, 1, 0);
+    let margin = global("Fold margin");
+    send(
+        v,
+        SCI_SETFOLDMARGINCOLOUR,
+        1,
+        margin.and_then(|s| s.bg).unwrap_or(0x808080),
+    );
+    send(
+        v,
+        SCI_SETFOLDMARGINHICOLOUR,
+        1,
+        margin.and_then(|s| s.fg).unwrap_or(0xFFFFFF),
+    );
+    send(v, SCI_SETMARGINTYPEN, FOLD_MARGIN, 0);
+    send(v, SCI_SETMARGINMASKN, FOLD_MARGIN, SC_MASK_FOLDERS);
+    send(
+        v,
+        SCI_SETMARGINWIDTHN,
+        FOLD_MARGIN,
+        if view::needs_fold_margin(lang) { 14 } else { 0 },
+    );
+    send(v, SCI_SETMARGINSENSITIVEN, FOLD_MARGIN, 1);
+    send(v, SCI_SETFOLDFLAGS, SC_FOLDFLAG_LINEAFTER_CONTRACTED, 0);
+    send(v, SCI_SETAUTOMATICFOLD, SC_AUTOMATICFOLD_ALL, 0);
+}
+
+fn set_representation(v: &NSView, ch: &str, text: &str, plain: bool) {
+    let (c, t) = (
+        CString::new(ch.replace('\0', "")).unwrap(),
+        CString::new(text).unwrap(),
+    );
+    send(
+        v,
+        SCI_SETREPRESENTATION,
+        c.as_ptr() as usize,
+        t.as_ptr() as isize,
+    );
+    if plain {
+        send(v, SCI_SETREPRESENTATIONAPPEARANCE, c.as_ptr() as usize, 0);
+    }
+}
+
+// Show Symbol: ScintillaEditView showWSAndTab, showEOL, showNpc and showCcUniEol.
+pub fn setup_symbols(v: &NSView, cfg: &Config, ws: bool, eol: bool, npc: bool, cc: bool) {
+    send(v, SCI_SETVIEWWS, ws as usize, 0);
+    send(v, SCI_SETWHITESPACESIZE, 2, 0);
+    if let Some(c) = cfg
+        .global_styles
+        .iter()
+        .find(|s| s.name == "White space symbol")
+        .and_then(|s| s.fg)
+    {
+        send(v, SCI_SETWHITESPACEFORE, 1, c);
+    }
+    send(v, SCI_SETVIEWEOL, eol as usize, 0);
+    send(v, SCI_CLEARALLREPRESENTATIONS, 0, 0);
+    if npc {
+        view::npc_chars()
+            .iter()
+            .for_each(|(c, a)| set_representation(v, c, a, false));
+    }
+    for (c, a) in view::cc_chars() {
+        set_representation(v, c, if cc { a } else { "\u{200B}" }, !cc);
+    }
+}
+
+// ScintillaEditView::setTabSettings with the default Lang and NppGUI values.
+pub fn setup_tabs(v: &NSView, lang: &str) {
+    let (width, use_tabs) = view::tab_settings(lang);
+    send(v, SCI_SETTABWIDTH, width, 0);
+    send(v, SCI_SETUSETABS, use_tabs as usize, 0);
+}
+
+pub fn setup_indent_guides(v: &NSView, look_forward: bool, on: bool) {
+    let mode = match (on, look_forward) {
+        (false, _) => 0,
+        (true, true) => SC_IV_LOOKFORWARD,
+        (true, false) => SC_IV_LOOKBOTH,
+    };
+    send(v, SCI_SETINDENTATIONGUIDES, mode, 0);
+}
+
+// Word wrap with the Notepad++ default aligned indent, and the wrap symbol at the line end.
+pub fn setup_wrap(v: &NSView, wrap: bool, symbol: bool) {
+    send(v, SCI_SETWRAPINDENTMODE, SC_WRAPINDENT_SAME, 0);
+    send(v, SCI_SETWRAPMODE, wrap as usize, 0);
+    send(v, SCI_SETWRAPVISUALFLAGSLOCATION, 0, 0);
+    send(v, SCI_SETWRAPVISUALFLAGS, symbol as usize, 0);
+}
+
+// Sets the zoom and fits the line number margin to it.
+pub fn set_zoom(v: &NSView, zoom: isize) {
+    send(v, SCI_SETZOOM, zoom as usize, 0);
+    let w = send_str(v, SCI_TEXTWIDTH, STYLE_LINENUMBER, "_99999");
+    send(v, SCI_SETMARGINWIDTHN, 0, w);
 }
