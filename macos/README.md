@@ -18,6 +18,14 @@ Not affiliated with the Notepad++ project.
 
 2026-10-10:
 
+- Edit menu: Delete, Begin/End Select (also in Column Mode), Insert Date Time (short and long, in the macOS locale format), Copy to Clipboard (full path, file name, folder), Indent, Convert Case to (all 8 items), Line Operations, Blank Operations, and Read-Only on Current Document.
+- Line Operations: Duplicate, Remove Duplicate Lines, Remove Consecutive Duplicate Lines, Split, Join, Move Up/Down, Remove Empty Lines (2 items), Insert Blank Line Above/Below, Reverse Line Order, and the Lexicographic, Ignoring Case, Integer, and Decimal (comma and dot) sorts. There is no Randomize, Locale, or Length sort.
+- Each line or blank operation is one undo step. It changes the selected lines, or the whole document when there is no selection, as in Notepad++. Invalid UTF-8 bytes stay unchanged.
+- Cut and Copy are always on in the editor. Without a selection they cut or copy the current line, as in Notepad++ with its default settings.
+- Shortcuts: Cmd+D duplicates the line, Ctrl+Shift+Up/Down moves it, Cmd+Opt+Return and Cmd+Opt+Shift+Return insert a blank line, Cmd+Shift+U is UPPERCASE, Cmd+Opt+U is Sentence case, Cmd+Shift+B is Begin/End Select. Notepad++ shortcuts that are macOS standards (Cmd+U, Cmd+I, Cmd+J) are not used.
+- Case conversion maps one character to one character, as Windows does (for example, ß stays ß in UPPERCASE). Text sorts compare UTF-8 bytes, not UTF-16 units.
+- Multiple and rectangular selections: Convert Case and the sorts do nothing. The other commands use only the main selection.
+- Read-Only on Current Document disables EOL Conversion and the Encoding commands. A read-only tab still reloads when its file changes.
 - Tools menu: MD5, SHA-1, SHA-256, and SHA-512, each with Generate..., Generate from files..., and Generate from selection into clipboard. The hashes come from macOS CommonCrypto.
 - As in Notepad++, the selection and the Generate... text stop at the first NUL byte. The selection hash uses the UTF-8 bytes of the tab, also when the file encoding is different.
 - In Generate..., the text box uses LF line ends. A hash of more than one line is different from Notepad++ on Windows (CR LF). Generate from files... skips a file larger than 4 GiB.

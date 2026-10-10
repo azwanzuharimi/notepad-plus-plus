@@ -14,6 +14,7 @@ pub const SCN_DOUBLECLICK: u32 = 2006;
 pub const SCN_UPDATEUI: u32 = 2007;
 pub const RESULTS_ID: usize = 1;
 const SCI_CLEARALL: u32 = 2004;
+const SCI_GETREADONLY: u32 = 2140;
 const SCI_GETCURRENTPOS: u32 = 2008;
 const SCI_SETUNDOCOLLECTION: u32 = 2012;
 const SCI_GOTOLINE: u32 = 2024;
@@ -139,8 +140,18 @@ pub fn is_modified(v: &NSView) -> bool {
     send(v, SCI_GETMODIFY, 0, 0) != 0
 }
 
+// Scintilla refuses text changes in a read-only document, so a load clears that state for its duration.
+fn writable(v: &NSView, f: impl FnOnce()) {
+    let ro = read_only(v);
+    set_read_only(v, false);
+    f();
+    set_read_only(v, ro);
+}
+
 pub fn set_bytes(v: &NSView, b: &[u8]) {
-    send(v, SCI_APPENDTEXT, b.len(), b.as_ptr() as isize);
+    writable(v, || {
+        send(v, SCI_APPENDTEXT, b.len(), b.as_ptr() as isize);
+    });
     send(v, SCI_EMPTYUNDOBUFFER, 0, 0);
     send(v, SCI_SETSAVEPOINT, 0, 0);
     reset_change_history(v);
@@ -186,6 +197,10 @@ pub fn position_info(v: &NSView) -> (isize, isize, isize, Option<(isize, isize)>
     (line + 1, col + 1, pos + 1, sel)
 }
 
+pub fn read_only(v: &NSView) -> bool {
+    send(v, SCI_GETREADONLY, 0, 0) != 0
+}
+
 pub fn set_read_only(v: &NSView, on: bool) {
     send(v, SCI_SETREADONLY, on as usize, 0);
 }
@@ -201,8 +216,10 @@ pub fn replace_text(v: &NSView, b: &[u8]) {
 }
 
 pub fn reload(v: &NSView, b: &[u8]) {
-    send(v, SCI_CLEARALL, 0, 0);
-    set_bytes(v, b);
+    writable(v, || {
+        send(v, SCI_CLEARALL, 0, 0);
+        set_bytes(v, b);
+    });
 }
 
 pub fn bytes(v: &NSView) -> Vec<u8> {

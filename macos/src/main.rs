@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod config;
+mod edit;
 mod encoding;
 mod fileops;
 mod lang;
@@ -69,6 +70,7 @@ struct Tab {
     enc: Enc,
     enc_dirty: bool,
     lost: bool,
+    ro: bool,
 }
 
 #[derive(Default)]
@@ -87,6 +89,7 @@ struct Ivars {
     fif_ui: OnceCell<FifUi>,
     status: OnceCell<Vec<Retained<NSTextField>>>,
     view: Cell<view::Opts>,
+    begin_select: Cell<Option<(isize, bool)>>,
 }
 
 #[repr(C)]
@@ -595,6 +598,75 @@ define_class!(
         }
     }
 
+    impl App {
+        #[unsafe(method(sciCommand:))]
+        fn sci_command(&self, s: &NSMenuItem) {
+            if let Some(v) = self.editor() {
+                sci::send(&v, s.tag() as u32, 0, 0);
+            }
+        }
+
+        #[unsafe(method(editOp:))]
+        fn edit_op(&self, s: &NSMenuItem) {
+            let Some(v) = self.editor() else { return };
+            if let Err(i) = edit::run(&v, s.tag()) {
+                let msg = format!("Unable to perform numeric sorting due to line {}.", i + 1);
+                self.alert("Sorting Error", &msg, &["OK"]);
+            }
+        }
+
+        #[unsafe(method(beginEndSelect:))]
+        fn begin_end_select(&self, s: &NSMenuItem) {
+            if let Some(v) = self.editor() {
+                let b = &self.ivars().begin_select;
+                b.set(edit::begin_end_select(&v, b.get(), s.tag() == 1));
+            }
+        }
+
+        #[unsafe(method(insertDateTime:))]
+        fn insert_date_time(&self, s: &NSMenuItem) {
+            if let Some(v) = self.editor() {
+                edit::insert_date_time(&v, s.tag() == 1);
+            }
+        }
+
+        #[unsafe(method(copyPathInfo:))]
+        fn copy_path_info(&self, s: &NSMenuItem) {
+            let Some(t) = self.current().and_then(|i| self.tab(i)) else { return };
+            let full = t.path.as_deref().map_or(t.name.clone(), |p| p.display().to_string());
+            let dir = t.path.as_deref().and_then(Path::parent).map_or(String::new(), |p| p.display().to_string());
+            tools::to_clipboard(match s.tag() {
+                0 => &full,
+                1 => &t.name,
+                _ => &dir,
+            });
+        }
+
+        #[unsafe(method(toggleReadOnly:))]
+        fn toggle_read_only(&self, _s: Option<&AnyObject>) {
+            let Some(i) = self.current() else { return };
+            let ro = {
+                let mut tabs = self.ivars().tabs.borrow_mut();
+                let Some(t) = tabs.get_mut(i) else { return };
+                t.ro = !t.ro;
+                t.ro
+            };
+            if let Some(t) = self.tab(i) {
+                sci::set_read_only(&t.view, ro || self.ivars().replacing.get());
+            }
+        }
+
+        #[unsafe(method(cut:))]
+        fn cut(&self, s: Option<&AnyObject>) {
+            self.cut_or_copy(sel!(cut:), s);
+        }
+
+        #[unsafe(method(copy:))]
+        fn copy(&self, s: Option<&AnyObject>) {
+            self.cut_or_copy(sel!(copy:), s);
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -952,7 +1024,7 @@ impl App {
 
     fn set_tabs_read_only(&self, on: bool) {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
-        tabs.iter().for_each(|t| sci::set_read_only(&t.view, on));
+        tabs.iter().for_each(|t| sci::set_read_only(&t.view, on || t.ro));
     }
 
     // Reloads open tabs of changed files and returns the paths of modified tabs it did not reload.
@@ -1080,6 +1152,7 @@ impl App {
             enc,
             enc_dirty: false,
             lost,
+            ro: false,
         });
         let last = self.ivars().tabs.borrow().len() - 1;
         self.refresh_title(last);
@@ -1090,6 +1163,9 @@ impl App {
 
     // Checkmarks for the current encoding and EOL; format commands are off while Replace in Files runs.
     fn validate(&self, item: &NSMenuItem) -> bool {
+        if let Some(r) = self.validate_edit(item) {
+            return r;
+        }
         let Some(action) = item.action() else {
             return true;
         };
@@ -1111,7 +1187,7 @@ impl App {
             NSControlStateValueOff
         });
         let format = [sel!(encodeIn:), sel!(convertTo:), sel!(eolConvert:)].contains(&action);
-        !(format && (tab.is_none() || self.ivars().replacing.get()))
+        !(format && (tab.as_ref().is_none_or(|t| t.ro) || self.ivars().replacing.get()))
             && !matches!(tag_enc(item.tag()), Enc::Cp(cp) if action == sel!(encodeIn:) && !encoding::supported(cp))
     }
 
@@ -1417,48 +1493,7 @@ fn main() {
         vec![item(mtm, "Quit Notepad++", sel!(terminate:), "q", None)],
     );
     submenu(mtm, &bar, "File", fileops::file_menu(mtm, t));
-    submenu(
-        mtm,
-        &bar,
-        "Edit",
-        vec![
-            item(mtm, "Undo", sel!(undo:), "z", None),
-            item(mtm, "Redo", sel!(redo:), "Z", None),
-            NSMenuItem::separatorItem(mtm),
-            item(mtm, "Cut", sel!(cut:), "x", None),
-            item(mtm, "Copy", sel!(copy:), "c", None),
-            item(mtm, "Paste", sel!(paste:), "v", None),
-            item(mtm, "Select All", sel!(selectAll:), "a", None),
-            NSMenuItem::separatorItem(mtm),
-            nested(
-                mtm,
-                "EOL Conversion",
-                vec![
-                    tagged(
-                        mtm,
-                        "Windows (CR LF)",
-                        sel!(eolConvert:),
-                        encoding::SC_EOL_CRLF as isize,
-                        t,
-                    ),
-                    tagged(
-                        mtm,
-                        "Unix (LF)",
-                        sel!(eolConvert:),
-                        encoding::SC_EOL_LF as isize,
-                        t,
-                    ),
-                    tagged(
-                        mtm,
-                        "Macintosh (CR)",
-                        sel!(eolConvert:),
-                        encoding::SC_EOL_CR as isize,
-                        t,
-                    ),
-                ],
-            ),
-        ],
-    );
+    submenu(mtm, &bar, "Edit", edit::edit_menu(mtm, t));
     submenu(mtm, &bar, "Search", search_extras::search_menu(mtm, t));
     submenu(mtm, &bar, "View", view::view_menu(mtm, t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
