@@ -284,6 +284,7 @@ struct PostIt {
 struct Monitor {
     item: Option<Retained<NSTabViewItem>>,
     stamp: Option<(SystemTime, u64)>,
+    prior_ro: bool,
 }
 
 thread_local! {
@@ -351,14 +352,16 @@ impl App {
         let Some(i) = self.current() else { return };
         let Some(t) = self.tab(i) else { return };
         if self.monitored(&t.item) {
-            MONITORED.with(|m| {
-                m.borrow_mut().retain(|x| {
-                    !x.item
+            let prior = MONITORED.with(|m| {
+                let mut m = m.borrow_mut();
+                let k = m.iter().position(|x| {
+                    x.item
                         .as_deref()
                         .is_some_and(|it| std::ptr::eq(it, &*t.item))
-                })
+                })?;
+                Some(m.remove(k).prior_ro)
             });
-            self.set_user_read_only(i, false);
+            self.set_user_read_only(i, prior.unwrap_or(false));
             return;
         }
         let Some(st) = t.path.as_deref().and_then(stamp) else {
@@ -381,6 +384,7 @@ impl App {
             m.borrow_mut().push(Monitor {
                 item: Some(t.item.clone()),
                 stamp: st,
+                prior_ro: t.ro,
             })
         });
         self.set_user_read_only(i, true);
@@ -416,12 +420,16 @@ impl App {
                 continue;
             };
             let Some(now) = stamp(&p) else {
-                self.set_user_read_only(i, false);
+                self.set_user_read_only(i, m.prior_ro);
                 continue;
             };
             if now != m.stamp {
                 if let Ok(b) = std::fs::read(&p) {
-                    self.load_into(i, &b, t.enc);
+                    let e = match t.enc {
+                        crate::Enc::Cp(_) => t.enc,
+                        _ => crate::encoding::detect(&b),
+                    };
+                    self.load_into(i, &b, e);
                     sci::send(&t.view, SCI_DOCUMENTEND, 0, 0);
                 }
                 m.stamp = now;
@@ -457,6 +465,9 @@ impl App {
         for v in content.subviews().iter() {
             if labels.iter().any(|l| std::ptr::eq::<NSView>(&****l, &*v)) {
                 v.setHidden(!show);
+                continue;
+            }
+            if v.isHidden() {
                 continue;
             }
             let mut f = v.frame();
@@ -567,7 +578,10 @@ impl App {
                 if self.post_it_on() {
                     self.post_it_toggle();
                 }
-                shown.into_iter().for_each(|s| self.toggle_panel(s));
+                shown
+                    .into_iter()
+                    .filter(|&s| !self.panel_visible(s))
+                    .for_each(|s| self.toggle_panel(s));
                 0
             }
         };

@@ -3,15 +3,16 @@ use crate::{item, macros, nested, ns, sci, tagged, App};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject, Sel};
 use objc2::{
-    define_class, msg_send, sel, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly,
+    define_class, msg_send, sel, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSApplication, NSEventType, NSMenu, NSMenuDelegate, NSMenuItem, NSSegmentedControl, NSView,
+    NSApplication, NSEventType, NSMenu, NSMenuDelegate, NSMenuItem, NSSegmentedControl, NSTabView,
+    NSView,
 };
 use objc2_foundation::NSObjectProtocol;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 
 const SCI_GETSELECTIONS: u32 = 2570;
@@ -224,7 +225,7 @@ fn resolve(bar: &NSMenu, top: &[Node], cmd: &Cmd) -> Option<Retained<NSMenuItem>
 
 fn copy_item(mtm: MainThreadMarker, src: &NSMenuItem, label: &str) -> Retained<NSMenuItem> {
     let title = if label.is_empty() {
-        purge(&src.title().to_string())
+        src.title().to_string()
     } else {
         label.to_string()
     };
@@ -335,6 +336,7 @@ struct State {
     entries: Vec<Entry>,
     edit: Retained<NSMenu>,
     tabs: Retained<NSMenu>,
+    tab_views: RefCell<Vec<Retained<NSTabView>>>,
     _delegate: Retained<Menus>,
 }
 
@@ -403,6 +405,7 @@ pub fn install(mtm: MainThreadMarker, bar: &NSMenu, t: Option<&AnyObject>) {
         entries: load(),
         edit,
         tabs,
+        tab_views: RefCell::new(vec![]),
         _delegate: delegate,
     };
     S.with(|s| {
@@ -421,11 +424,17 @@ impl App {
         self.tab_bar_menu();
     }
 
-    // The tab bar of NSTabView is a segmented control subview, so it gets the menu too.
     pub(crate) fn tab_bar_menu(&self) {
-        let tv = self.tab_view();
+        self.tab_bar_menu_for(self.tab_view());
+    }
+
+    // Gives a tab view the tab menu; its tab bar is a segmented control subview, so that gets the menu too.
+    pub(crate) fn tab_bar_menu_for(&self, tv: &NSTabView) {
         S.with(|s| {
             let Some(s) = s.get() else { return };
+            if !s.tab_views.borrow().iter().any(|t| std::ptr::eq(&**t, tv)) {
+                s.tab_views.borrow_mut().push(tv.retain());
+            }
             unsafe { tv.setMenu(Some(&s.tabs)) };
             for v in tv.subviews().iter() {
                 if v.isKindOfClass(NSSegmentedControl::class()) {
@@ -501,13 +510,15 @@ impl App {
     fn fill_tab_menu(&self, m: &NSMenu) {
         let mtm = self.mtm();
         m.removeAllItems();
-        let tv = self.tab_view();
         if let Some(e) = NSApplication::sharedApplication(mtm).currentEvent() {
-            let p = tv.convertPoint_fromView(e.locationInWindow(), None);
-            let Some(hit) = tv.tabViewItemAtPoint(p) else {
-                return;
-            };
-            tv.selectTabViewItem(Some(&hit));
+            let views = S.with(|s| s.get().map_or(vec![], |s| s.tab_views.borrow().clone()));
+            let hit = views.iter().find_map(|tv| {
+                let p = tv.convertPoint_fromView(e.locationInWindow(), None);
+                tv.tabViewItemAtPoint(p).map(|i| (tv.clone(), i))
+            });
+            if let Some((tv, item)) = hit {
+                tv.selectTabViewItem(Some(&item));
+            }
         }
         let t: &AnyObject = self;
         let items = tab_items()
