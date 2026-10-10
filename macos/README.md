@@ -30,6 +30,15 @@ Not affiliated with the Notepad++ project.
 - Not done: a file deleted after its backup opens with its path, not as an untitled tab. Environment variables in the custom backup folder are not expanded.
 
 
+2026-10-10 (Localization):
+
+- Settings > Preferences > General > Localization lists the 94 Notepad++ translations (`PowerEditor/installer/nativeLang`, built into the app) by their native names, in file name order, as in Notepad++. A choice copies the file to `nativeLang.xml` in the settings folder and changes the menus and open dialogs at once. At start the app reads `nativeLang.xml`; without it, or with `english.xml`, the app stays in English, as in Notepad++.
+- Menus: the menu bar entries (`<Entries>`), submenus (`<SubEntries>`), and commands (`<Commands>`) by the menuCmdID.h id of the macro command table, else by the English name in `english.xml`. The `&` accelerators and the text after a TAB are removed. The macOS key equivalents stay. Menu items that the app adds later (recent files, UDL, Window list) are translated too. The tab context menu uses `<TabBar>`.
+- Dialogs: the title and the labels, buttons, and check boxes of a dialog whose title is a `<Dialog>` title in `english.xml` (for example Find, Find in Files, and Mark), matched by the English text, when the dialog becomes the key window. Message boxes: an alert text that is a `<MessageBox>` title or message of `english.xml` shows the translation, with `$STR_REPLACE$` and `$INT_REPLACE$` filled in.
+- Arabic, Farsi, Hebrew, Kurdish, Urdu, and Uyghur (`RTL="yes"`) set the right-to-left layout on the menus. The editor and the dialogs stay left-to-right.
+- Not done: a change to English restores the app's own English text, not the `english.xml` names. Items, labels, and alerts whose English text is not in `english.xml` stay English (for example Move to Trash, Find Previous, and most alert texts of this app). Alert buttons, popup lists, status texts (`<MiscStrings>`), the Preferences page list, and `<ComboBox>` lists are not translated. Translated button text can be cut off.
+
+
 2026-10-10 (Preferences):
 
 - Settings > Preferences... (Cmd+,) opens the Notepad++ Preferences window: a list of pages on the left and the page on the right. The pages are Editing 1, Editing 2, Margins/Border/Edge, New Document, Default Directory, Recent Files History, Indentation, Highlighting, Searching, Auto-Completion, Cloud & Link, Search Engine, and MISC., with the Notepad++ labels and defaults.
@@ -39,7 +48,7 @@ Not affiliated with the Notepad++ project.
 - Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
 - Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
 - `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page sets them.
-- Not done: the General, Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+- Not done: the General page (it has only Localization), the Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
 
 2026-10-10 (User Defined Languages):
 

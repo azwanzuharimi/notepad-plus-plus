@@ -53,9 +53,23 @@ fn embed_function_lists() {
 }
 
 
+// Writes NATIVE_LANGS: the PowerEditor/installer/nativeLang files embedded by file name.
+fn embed_native_langs() {
+    let mut out = String::from("pub const NATIVE_LANGS: &[(&str, &str)] = &[\n");
+    for f in files("../PowerEditor/installer/nativeLang", ".xml") {
+        let p = fs::canonicalize(&f).unwrap();
+        let name = p.file_name().unwrap().to_str().unwrap().to_string();
+        out += &format!("    ({name:?}, include_str!({:?})),\n", p.to_str().unwrap());
+    }
+    out += "];\n";
+    fs::write(std::env::var("OUT_DIR").unwrap() + "/native_langs.rs", out).unwrap();
+}
+
+
 fn main() {
     embed_apis();
     embed_function_lists();
+    embed_native_langs();
     base()
         .files(files("../scintilla/src", ".cxx"))
         .file("../boostregex/BoostRegExSearch.cxx")
@@ -94,6 +108,7 @@ fn main() {
         "src/charset.cxx",
         "../PowerEditor/installer/APIs",
         "../PowerEditor/installer/functionList",
+        "../PowerEditor/installer/nativeLang",
     ] {
         println!("cargo:rerun-if-changed={d}");
     }

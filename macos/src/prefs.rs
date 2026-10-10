@@ -1074,7 +1074,8 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 14] = [
+pub const PAGES: [&str; 15] = [
+    "General",
     "Editing 1",
     "Editing 2",
     "Margins/Border/Edge",
@@ -1379,6 +1380,12 @@ fn indent_langs() -> Vec<(String, String)> {
         .collect()
 }
 
+// GeneralSubDlg: the Localization list.
+fn general_page(b: &mut Build, c: &mut Col, _: &mut Col) {
+    b.label_at(c, "Localization", 0., 100.);
+    c.put(&crate::l10n::popup(b.mtm), 104., 220., 26.);
+}
+
 fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
     let mtm = b.mtm;
     let page = |b: &mut Build, f: &dyn Fn(&mut Build, &mut Col, &mut Col)| {
@@ -1398,6 +1405,7 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
     };
     let sv = SVP;
     vec![
+        page(b, &general_page),
         page(b, &|b, c, c2| {
             b.group(c, "Current Line Indicator", 270., |b, g| {
                 b.radio(g, "None", Bind::Radio(sv, "currentLineIndicator", "0"));

@@ -18,6 +18,7 @@ mod filestatus;
 mod finder;
 mod funclist;
 mod incsearch;
+mod l10n;
 mod lang;
 mod language;
 mod macros;
@@ -1998,8 +1999,8 @@ impl App {
 
     fn alert(&self, msg: &str, info: &str, buttons: &[&str]) -> isize {
         let a = NSAlert::new(self.mtm());
-        a.setMessageText(&NSString::from_str(msg));
-        a.setInformativeText(&NSString::from_str(info));
+        a.setMessageText(&NSString::from_str(&l10n::message(msg)));
+        a.setInformativeText(&NSString::from_str(&l10n::message(info)));
         for b in buttons {
             a.addButtonWithTitle(&NSString::from_str(b));
         }
@@ -2151,5 +2152,6 @@ fn main() {
     }
     context_menu::install(mtm, &bar, t);
     app.setMainMenu(Some(&bar));
+    l10n::install(mtm);
     app.run();
 }

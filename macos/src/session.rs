@@ -463,10 +463,7 @@ pub fn lang_from_menu_text(c: &Config, text: &str) -> Option<String> {
 }
 
 fn file_menu(mtm: MainThreadMarker) -> Option<Retained<NSMenu>> {
-    NSApplication::sharedApplication(mtm)
-        .mainMenu()?
-        .itemWithTitle(&ns("File"))?
-        .submenu()
+    crate::l10n::bar_menu(&*NSApplication::sharedApplication(mtm).mainMenu()?, "File")
 }
 
 // Parameters.cpp writeSession: an optional copy of the old file, then a write through a temporary file.

@@ -380,6 +380,11 @@ pub fn menu_step(action: &str, tag: isize) -> Option<Step> {
         .map(|c| Step::menu(c.id))
 }
 
+// (action, tag, menuCmdID.h ID) of each menu command in the table.
+pub(crate) fn menu_ids() -> Vec<(&'static str, isize, i32)> {
+    menu_cmds().into_iter().map(|c| (c.action, c.tag, c.id)).collect()
+}
+
 pub(crate) fn menu_action(id: i32) -> Option<(&'static str, isize)> {
     menu_cmds()
         .into_iter()

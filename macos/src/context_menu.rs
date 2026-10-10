@@ -188,12 +188,13 @@ pub fn layout<T>(items: Vec<(String, Option<T>)>) -> Vec<Out<T>> {
     out
 }
 
+// Notepad_plus::init reads contextMenu.xml before changeMenuLang, so the names are the English ones.
 fn tree(m: &NSMenu) -> Vec<Node> {
     m.itemArray()
         .iter()
         .map(|i| match i.submenu() {
-            Some(s) => Node::Menu(i.title().to_string(), tree(&s)),
-            None => Node::Item(i.title().to_string()),
+            Some(s) => Node::Menu(crate::l10n::english_title(&i), tree(&s)),
+            None => Node::Item(crate::l10n::english_title(&i)),
         })
         .collect()
 }
