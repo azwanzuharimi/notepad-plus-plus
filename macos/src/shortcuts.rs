@@ -79,11 +79,13 @@ pub fn record(m: &mut Vec<Step>, msg: i32, w: usize, l: isize, s: Option<&str>, 
     m.push(step);
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
+// Notepad++ semantics: ctrl is Command and alt is Option on macOS; meta is the macOS Control key (MacControl="yes").
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Key {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
+    pub meta: bool,
     pub key: u8,
 }
 
@@ -103,10 +105,28 @@ pub struct Command {
     pub cmd: String,
 }
 
+// A <Shortcut> of <InternalCommands>: a new key for the menu command `id`.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Internal {
+    pub id: i32,
+    pub nth: i32,
+    pub key: Key,
+}
+
+// A <ScintKey> of <ScintillaKeys>: all the keys of the Scintilla command `id`.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ScintKey {
+    pub id: i32,
+    pub menu_id: i32,
+    pub keys: Vec<Key>,
+}
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Shortcuts {
     pub macros: Vec<Macro>,
     pub commands: Vec<Command>,
+    pub internal: Vec<Internal>,
+    pub scint: Vec<ScintKey>,
 }
 
 // The Notepad++ default macro, and macOS forms of the Notepad++ default user commands; the Windows ones do not run on macOS.
@@ -133,6 +153,8 @@ pub fn defaults() -> Shortcuts {
             folder: String::new(),
             steps: vec![Step::menu(42024), Step::menu(41006)],
         }],
+        internal: vec![],
+        scint: vec![],
         commands: vec![
             cmd(
                 "Get PHP help",
@@ -171,19 +193,21 @@ fn yes(e: &BytesStart, key: &str) -> bool {
 }
 
 // Port of NppParameters::getShortcuts: an item without a Key attribute is not loaded.
-fn key_and_folder(e: &BytesStart) -> Option<(String, Key, String)> {
+fn key_of(e: &BytesStart) -> Option<Key> {
     let key = int(e, "Key")?;
-    if key == -1 {
-        return None;
-    }
+    (key != -1).then(|| Key {
+        ctrl: yes(e, "Ctrl"),
+        alt: yes(e, "Alt"),
+        shift: yes(e, "Shift"),
+        meta: yes(e, "MacControl"),
+        key: key as u8,
+    })
+}
+
+fn key_and_folder(e: &BytesStart) -> Option<(String, Key, String)> {
     Some((
         attr(e, "name").unwrap_or_default(),
-        Key {
-            ctrl: yes(e, "Ctrl"),
-            alt: yes(e, "Alt"),
-            shift: yes(e, "Shift"),
-            key: key as u8,
-        },
+        key_of(e)?,
         attr(e, "FolderName").unwrap_or_default(),
     ))
 }
@@ -224,13 +248,47 @@ fn end_loaded(m: &mut [Step]) {
 pub fn parse(xml: &str) -> Result<Shortcuts, String> {
     let mut r = Reader::from_str(xml);
     let mut out = Shortcuts::default();
-    let (mut section, mut in_macro) = ("", false);
+    let (mut section, mut in_macro, mut in_scint) = ("", false, false);
     let mut cmd: Option<Command> = None;
     loop {
-        match r.read_event().map_err(|e| e.to_string())? {
+        let ev = r.read_event().map_err(|e| e.to_string())?;
+        if let Event::Start(e) | Event::Empty(e) = &ev {
+            match (section, e.name().as_ref()) {
+                ("Internal", "Shortcut") => {
+                    if let (Some(id @ 1..), Some(key)) = (int(e, "id"), key_of(e)) {
+                        out.internal.push(Internal {
+                            id: id as i32,
+                            nth: int(e, "nth").unwrap_or(0) as i32,
+                            key,
+                        });
+                    }
+                }
+                ("Scint", "ScintKey") => {
+                    let id = int(e, "ScintID").filter(|v| *v != -1);
+                    let menu = int(e, "menuCmdID").filter(|v| *v != -1);
+                    if let (Some(id), Some(menu), Some(key)) = (id, menu, key_of(e)) {
+                        out.scint.push(ScintKey {
+                            id: id as i32,
+                            menu_id: menu as i32,
+                            keys: vec![key],
+                        });
+                        in_scint = matches!(ev, Event::Start(_));
+                    }
+                }
+                ("Scint", "NextKey") if in_scint => {
+                    if let (Some(k), Some(sk)) = (key_of(e), out.scint.last_mut()) {
+                        sk.keys.push(k);
+                    }
+                }
+                _ => {}
+            }
+        }
+        match ev {
             Event::Start(e) => match e.name().as_ref() {
+                "InternalCommands" => section = "Internal",
                 "Macros" => section = "Macros",
                 "UserDefinedCommands" => section = "Cmds",
+                "ScintillaKeys" => section = "Scint",
                 "Macro" if section == "Macros" => {
                     in_macro = match key_and_folder(&e) {
                         Some((name, key, folder)) => {
@@ -289,7 +347,10 @@ pub fn parse(xml: &str) -> Result<Shortcuts, String> {
                 }
             }
             Event::End(e) => match e.name().as_ref() {
-                "Macros" | "UserDefinedCommands" => section = "",
+                "InternalCommands" | "Macros" | "UserDefinedCommands" | "ScintillaKeys" => {
+                    section = ""
+                }
+                "ScintKey" => in_scint = false,
                 "Macro" if in_macro => {
                     end_loaded(&mut out.macros.last_mut().unwrap().steps);
                     in_macro = false;
@@ -332,19 +393,61 @@ fn yes_no(b: bool) -> &'static str {
     }
 }
 
-fn head(tag: &str, name: &str, k: &Key, folder: &str) -> String {
+fn key_attrs(k: &Key) -> String {
     let mut s = format!(
-        "<{tag} name=\"{}\" Ctrl=\"{}\" Alt=\"{}\" Shift=\"{}\" Key=\"{}\"",
-        esc(name),
+        "Ctrl=\"{}\" Alt=\"{}\" Shift=\"{}\" Key=\"{}\"",
         yes_no(k.ctrl),
         yes_no(k.alt),
         yes_no(k.shift),
         k.key
     );
+    if k.meta {
+        s += " MacControl=\"yes\"";
+    }
+    s
+}
+
+fn head(tag: &str, name: &str, k: &Key, folder: &str) -> String {
+    let mut s = format!("<{tag} name=\"{}\" {}", esc(name), key_attrs(k));
     if !folder.is_empty() {
         s += &format!(" FolderName=\"{}\"", esc(folder));
     }
     s
+}
+
+fn internal_xml(s: &Shortcuts) -> String {
+    let mut o = String::from("<InternalCommands>\r\n");
+    for c in &s.internal {
+        o += &format!("\t\t<Shortcut id=\"{}\" {}", c.id, key_attrs(&c.key));
+        if c.nth != 0 {
+            o += &format!(" nth=\"{}\"", c.nth);
+        }
+        o += " />\r\n";
+    }
+    o + "\t</InternalCommands>"
+}
+
+fn scint_xml(s: &Shortcuts) -> String {
+    let mut o = String::from("<ScintillaKeys>\r\n");
+    for c in &s.scint {
+        let first = c.keys.first().copied().unwrap_or_default();
+        o += &format!(
+            "\t\t<ScintKey ScintID=\"{}\" menuCmdID=\"{}\" {}",
+            c.id,
+            c.menu_id,
+            key_attrs(&first)
+        );
+        if c.keys.len() < 2 {
+            o += " />\r\n";
+            continue;
+        }
+        o += ">\r\n";
+        for k in &c.keys[1..] {
+            o += &format!("\t\t\t<NextKey {} />\r\n", key_attrs(k));
+        }
+        o += "\t\t</ScintKey>\r\n";
+    }
+    o + "\t</ScintillaKeys>"
 }
 
 fn macros_xml(s: &Shortcuts) -> String {
@@ -378,18 +481,27 @@ fn commands_xml(s: &Shortcuts) -> String {
     o + "\t</UserDefinedCommands>"
 }
 
-// Writes the Macros and UserDefinedCommands sections into `existing` and keeps its other content.
+// Writes the InternalCommands, Macros, UserDefinedCommands and ScintillaKeys sections into `existing` and keeps its other content.
 pub fn write(existing: Option<&str>, s: &Shortcuts) -> Result<String, String> {
     let Some(src) = existing else {
         return Ok(format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n\t<InternalCommands />\r\n\t{}\r\n\t{}\r\n\t<PluginCommands />\r\n\t<ScintillaKeys />\r\n</NotepadPlus>\r\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\r\n<NotepadPlus>\r\n\t{}\r\n\t{}\r\n\t{}\r\n\t<PluginCommands />\r\n\t{}\r\n</NotepadPlus>\r\n",
+            internal_xml(s),
             macros_xml(s),
-            commands_xml(s)
+            commands_xml(s),
+            scint_xml(s)
         ));
     };
+    let sections = [
+        ("InternalCommands", internal_xml(s)),
+        ("Macros", macros_xml(s)),
+        ("UserDefinedCommands", commands_xml(s)),
+        ("ScintillaKeys", scint_xml(s)),
+    ];
+    let mut done = [false; 4];
     let mut r = Reader::from_str(src);
     let mut w = Writer::new(Vec::new());
-    let (mut skip, mut depth, mut done_m, mut done_c) = (false, 0, false, false);
+    let (mut skip, mut depth) = (false, 0);
     let raw = |w: &mut Writer<Vec<u8>>, t: &str| w.get_mut().write_all(t.as_bytes());
     loop {
         let ev = r.read_event().map_err(|e| e.to_string())?;
@@ -404,38 +516,31 @@ pub fn write(existing: Option<&str>, s: &Shortcuts) -> Result<String, String> {
             continue;
         }
         match &ev {
-            Event::Start(e) | Event::Empty(e)
-                if matches!(e.name().as_ref(), "Macros" | "UserDefinedCommands") =>
-            {
-                let m = e.name().as_ref() == "Macros";
-                raw(&mut w, &if m { macros_xml(s) } else { commands_xml(s) })
-                    .map_err(|e| e.to_string())?;
-                if m {
-                    done_m = true;
-                } else {
-                    done_c = true;
+            Event::Start(e) | Event::Empty(e) => {
+                if let Some(i) = sections.iter().position(|x| x.0 == e.name().as_ref()) {
+                    raw(&mut w, &sections[i].1).map_err(|e| e.to_string())?;
+                    done[i] = true;
+                    skip = matches!(ev, Event::Start(_));
+                    depth = 0;
+                    continue;
                 }
-                skip = matches!(ev, Event::Start(_));
-                depth = 0;
-                continue;
             }
             Event::End(e) if e.name().as_ref() == "NotepadPlus" => {
                 let mut t = String::new();
-                if !done_m {
-                    t += &format!("\t{}\r\n", macros_xml(s));
-                }
-                if !done_c {
-                    t += &format!("\t{}\r\n", commands_xml(s));
+                for (i, (_, x)) in sections.iter().enumerate() {
+                    if !done[i] {
+                        t += &format!("\t{x}\r\n");
+                    }
                 }
                 raw(&mut w, &t).map_err(|e| e.to_string())?;
-                (done_m, done_c) = (true, true);
+                done = [true; 4];
             }
             Event::Eof => break,
             _ => {}
         }
         w.write_event(ev).map_err(|e| e.to_string())?;
     }
-    if !(done_m && done_c) {
+    if done.contains(&false) {
         return Err("shortcuts.xml: the NotepadPlus element is missing.".into());
     }
     String::from_utf8(w.into_inner()).map_err(|e| e.to_string())
@@ -535,6 +640,7 @@ mod tests {
                 ctrl: false,
                 alt: true,
                 shift: true,
+                meta: false,
                 key: 83
             }
         );
@@ -555,6 +661,63 @@ mod tests {
             "https://www.php.net/$(CURRENT_WORD)?a=1&b=2"
         );
         assert_eq!(s.commands[0].key.key, 112);
+    }
+
+    const KEYS: &str = "<NotepadPlus>\r\n\t<InternalCommands>\r\n\t\t<Shortcut id=\"41001\" Ctrl=\"yes\" Alt=\"no\" Shift=\"no\" Key=\"78\" />\r\n\t\t<Shortcut id=\"43003\" Ctrl=\"yes\" Alt=\"no\" Shift=\"no\" Key=\"72\" nth=\"1\" />\r\n\t\t<Shortcut id=\"41002\" Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"0\" />\r\n\t\t<Shortcut id=\"0\" Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"65\" />\r\n\t\t<Shortcut id=\"41003\" Ctrl=\"yes\" />\r\n\t\t<Shortcut id=\"41004\" Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"87\" MacControl=\"yes\" />\r\n\t</InternalCommands>\r\n\t<ScintillaKeys>\r\n\t\t<ScintKey ScintID=\"2180\" menuCmdID=\"42006\" Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"46\" />\r\n\t\t<ScintKey ScintID=\"2308\" menuCmdID=\"0\" Ctrl=\"no\" Alt=\"yes\" Shift=\"no\" Key=\"37\">\r\n\t\t\t<NextKey Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"37\" MacControl=\"yes\" />\r\n\t\t</ScintKey>\r\n\t\t<ScintKey ScintID=\"2309\" Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"37\" />\r\n\t</ScintillaKeys>\r\n</NotepadPlus>\r\n";
+
+    fn k(ctrl: bool, alt: bool, shift: bool, meta: bool, key: u8) -> Key {
+        Key {
+            ctrl,
+            alt,
+            shift,
+            meta,
+            key,
+        }
+    }
+
+    #[test]
+    fn internal_commands_and_scintilla_keys_round_trip() {
+        let s = parse(KEYS).unwrap();
+        let ids: Vec<_> = s.internal.iter().map(|c| (c.id, c.nth, c.key)).collect();
+        assert_eq!(
+            ids,
+            vec![
+                (41001, 0, k(true, false, false, false, 78)),
+                (43003, 1, k(true, false, false, false, 72)),
+                (41002, 0, Key::default()),
+                (41004, 0, k(false, false, false, true, 87)),
+            ]
+        );
+        assert_eq!(
+            s.scint,
+            vec![
+                ScintKey {
+                    id: 2180,
+                    menu_id: 42006,
+                    keys: vec![k(false, false, false, false, 46)]
+                },
+                ScintKey {
+                    id: 2308,
+                    menu_id: 0,
+                    keys: vec![k(false, true, false, false, 37), k(false, false, false, true, 37)]
+                },
+            ]
+        );
+        let out = write(Some(KEYS), &s).unwrap();
+        assert_eq!(parse(&out).unwrap(), s);
+        assert!(out.contains("<Shortcut id=\"43003\" Ctrl=\"yes\" Alt=\"no\" Shift=\"no\" Key=\"72\" nth=\"1\" />"));
+        assert!(out.contains("<ScintKey ScintID=\"2180\" menuCmdID=\"42006\" Ctrl=\"no\" Alt=\"no\" Shift=\"no\" Key=\"46\" />"));
+        assert!(out.contains("<Macros>") && out.contains("<UserDefinedCommands>"));
+        let mut t = s.clone();
+        t.internal.remove(0);
+        t.scint[1].keys.pop();
+        t.macros = defaults().macros;
+        let out = write(Some(&out), &t).unwrap();
+        assert_eq!(parse(&out).unwrap(), t);
+        assert_eq!(parse(&write(None, &t).unwrap()).unwrap(), t);
+        let bare = write(Some("<NotepadPlus><Macros /></NotepadPlus>"), &t).unwrap();
+        assert_eq!(parse(&bare).unwrap(), t);
+        assert!(!write(None, &Shortcuts::default()).unwrap().contains("MacControl"));
     }
 
     #[test]

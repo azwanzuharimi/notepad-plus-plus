@@ -117,15 +117,15 @@ const NOT_RECORDED: [&str; 69] = [
     "IDM_VIEW_SWITCHTO_OTHER_VIEW",
 ];
 
-struct Cmd {
-    name: String,
-    id: i32,
-    action: &'static str,
-    tag: isize,
+pub(crate) struct Cmd {
+    pub(crate) name: String,
+    pub(crate) id: i32,
+    pub(crate) action: &'static str,
+    pub(crate) tag: isize,
 }
 
 // Notepad++ commands (menuCmdID.h) that this app has in its menus; a tag of -1 matches all tags.
-fn menu_cmds() -> Vec<Cmd> {
+pub(crate) fn menu_cmds() -> Vec<Cmd> {
     let mut v: Vec<(String, i32, &'static str, isize)> = [
         ("IDM_FILE_NEW", 41001, "newDocument:", -1),
         ("IDM_SETTING_PREFERENCE", 48011, "showPreferences:", -1),
@@ -645,6 +645,7 @@ fn rebuild(mtm: MainThreadMarker, t: Option<&AnyObject>) {
         run.addItem(&NSMenuItem::separatorItem(mtm));
         add_items(mtm, &run, cs, sel!(runUserCommand:), t);
     }
+    crate::shortcut_mapper::bind_saved(&mac, &run);
 }
 
 // Port of Notepad_plus::checkMacroState; Start and Stop share the Notepad++ toggle key, so only the enabled one keeps it.

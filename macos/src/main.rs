@@ -31,6 +31,7 @@ mod run;
 mod sci;
 mod search;
 mod search_extras;
+mod shortcut_mapper;
 mod shortcuts;
 mod session;
 mod style_dlg;
@@ -1068,6 +1069,48 @@ define_class!(
     }
 
     impl App {
+        #[unsafe(method(showShortcutMapper:))]
+        fn show_shortcut_mapper_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_show();
+        }
+
+        #[unsafe(method(shortcutMapperTab:))]
+        fn shortcut_mapper_tab_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_tab();
+        }
+
+        #[unsafe(method(shortcutMapperModify:))]
+        fn shortcut_mapper_modify_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_modify();
+        }
+
+        #[unsafe(method(shortcutMapperClear:))]
+        fn shortcut_mapper_clear_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_clear();
+        }
+
+        #[unsafe(method(shortcutMapperDelete:))]
+        fn shortcut_mapper_delete_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_delete();
+        }
+
+        #[unsafe(method(shortcutMapperFilterClear:))]
+        fn shortcut_mapper_filter_clear_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_filter_clear();
+        }
+
+        #[unsafe(method(shortcutMapperStart:))]
+        fn shortcut_mapper_start_action(&self, _s: Option<&AnyObject>) {
+            self.mapper_start();
+        }
+
+        #[unsafe(method(shortcutKeyChanged:))]
+        fn shortcut_key_changed_action(&self, s: &NSControl) {
+            self.mapper_key_changed(s.tag());
+        }
+    }
+
+    impl App {
         #[unsafe(method(copyBinary:))]
         fn copy_binary_action(&self, s: &NSMenuItem) {
             self.copy_binary(s.tag() == 1);
@@ -1827,6 +1870,7 @@ impl App {
 
     pub(crate) fn setup_editor(&self, view: &NSView, lang: Option<&config::Language>) {
         self.macro_arm(view);
+        self.mapper_arm(view);
         sci::apply_language(view, cfg(), lang);
         self.apply_view(view, lang.map_or("normal", |l| l.name.as_str()), cfg());
         sci::setup_bookmark_margin(view, cfg());

@@ -8,6 +8,15 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Shortcut Mapper):
+
+- Settings > Shortcut Mapper...: tabs Main menu, Macros, Run commands and Scintilla commands, with Name, Shortcut and Category columns, a filter, and Modify, Clear, Delete and Close. Rows with a conflict are red, and the conflict list shows below the table, as in Notepad++. A double click opens Modify. There is no Plugin commands tab.
+- Key rule in `shortcuts.xml`: Ctrl means Cmd and Alt means Option, so a Windows `shortcuts.xml` maps to the usual macOS keys. The macOS Control key is the extra attribute `MacControl="yes"`. Notepad++ on Windows ignores it. Key values are Windows virtual keys, as in Notepad++.
+- Changes apply at once and go to `shortcuts.xml`: `<InternalCommands>` for menu commands (only changed items, as in Notepad++), the keys of `<Macros>` and `<UserDefinedCommands>`, and `<ScintillaKeys>`. Entries for commands that this app does not have stay in the file. An unreadable file is not changed.
+- At start, the app applies `<InternalCommands>` (entries without `nth`), the saved macro and run command keys, and `<ScintillaKeys>` (all editors, also new tabs). With no `<ScintillaKeys>` entries, Scintilla keeps its own macOS keys.
+- The Scintilla commands list is the Notepad++ list. Its default keys are the macOS defaults of Scintilla, not the Windows ones.
+- Not done: the Window menu, the Language menu, the character set items of the Encoding menu, Start/Stop Recording, and the recent files items are not in the Main menu tab. A Scintilla command with a Notepad++ menu command (for example SCI_ZOOMIN) does not change the menu item key. One menu item has one key, so `nth="1"` entries are kept but not used.
+
 2026-10-10 (Toolbar):
 
 - The window has the Notepad++ toolbar, as a macOS toolbar below the title bar. The buttons and separators are in the Notepad++ order. Each button sends its menu command, so it is enabled, disabled, and checked as the menu item is, and a macro records it as the menu command.
