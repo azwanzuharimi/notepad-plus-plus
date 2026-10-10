@@ -42,7 +42,7 @@ impl Form {
         }
     }
 
-    fn place(&self, v: &NSView, x: f64, top: f64, w: f64, h: f64) {
+    pub fn place(&self, v: &NSView, x: f64, top: f64, w: f64, h: f64) {
         v.setFrame(NSRect::new(
             NSPoint::new(x, self.height - top - h),
             NSSize::new(w, h),
