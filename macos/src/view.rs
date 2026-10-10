@@ -696,6 +696,8 @@ pub fn view_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             .collect()
     };
     vec![
+        keyed(mtm, "Show Toolbar", sel!(toggleToolbarShown:), 0, "t", opt | cmd, None),
+        sep(),
         item(mtm, "Always on Top", sel!(alwaysOnTop:), "", t),
         item(mtm, "Toggle Full Screen Mode", sel!(fullScreen:), "", t),
         keyed(mtm, "Post-It", sel!(postIt:), 0, "\u{F70F}", NSEventModifierFlags::empty(), t),

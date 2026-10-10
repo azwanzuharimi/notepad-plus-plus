@@ -205,6 +205,11 @@ prefs! {
     auto_detect: String = "yes".into() => "Auto-detection" "",
     date_time_format: String = "yyyy-MM-dd HH:mm:ss".into() => "insertDateTime" "customizedFormat",
     date_time_reverse: bool = false => "insertDateTime" "reverseDefaultOrder",
+    toolbar_visible: bool = true => "ToolBar" "visible",
+    toolbar_color: i64 = 0 => "ToolBar" "fluentColor",
+    toolbar_custom_color: i64 = 0 => "ToolBar" "fluentCustomColor",
+    toolbar_mono: bool = false => "ToolBar" "fluentMono",
+    toolbar_icons: String = "standard".into() => "ToolBar" "",
 }
 
 // NppGUI::AutocStatus.
@@ -790,7 +795,7 @@ pub fn get() -> Prefs {
     with(Prefs::clone)
 }
 
-fn update(f: impl FnOnce(&mut Prefs)) {
+pub(crate) fn update(f: impl FnOnce(&mut Prefs)) {
     S.with(|s| f(s.borrow_mut().prefs.get_or_insert_with(load)));
 }
 
@@ -1095,8 +1100,9 @@ pub fn change_margin_width() -> isize {
 }
 
 // Preferences pages that apply on macOS, in the Notepad++ order (preferenceDlg.cpp).
-pub const PAGES: [&str; 17] = [
+pub const PAGES: [&str; 18] = [
     "General",
+    "Toolbar",
     "Editing 1",
     "Editing 2",
     "Margins/Border/Edge",
@@ -1221,6 +1227,8 @@ enum Bind {
     Browse,
     SnapshotSecs,
     BackupBrowse,
+    TbHide,
+    TbColor,
 }
 
 struct Ctl {
@@ -1519,8 +1527,43 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
         v
     };
     let sv = SVP;
+    let tb = "ToolBar";
     vec![
         page(b, &general_page),
+        page(b, &|b, c, c2| {
+            b.check(c, "Hide", Bind::TbHide);
+            c.y += 20.;
+            for (t, v) in [
+                ("Fluent UI: small", "small"),
+                ("Fluent UI: large", "large"),
+                ("Filled Fluent UI: small", "small2"),
+                ("Filled Fluent UI: large", "large2"),
+                ("Standard icons: small", "standard"),
+            ] {
+                b.radio(c, t, Bind::Radio(tb, "", v));
+            }
+            b.group(c2, "Colorization", 280., |b, g| {
+                b.radio(g, "Complete", Bind::Radio(tb, "fluentMono", "yes"));
+                b.radio(g, "Partial", Bind::Radio(tb, "fluentMono", "no"));
+                g.y += 6.;
+                b.group(g, "Color choice", 260., |b, g| {
+                    let colors = ["Red", "Green", "Blue", "Purple", "Cyan", "Olive", "Yellow"];
+                    for (k, t) in colors.iter().enumerate() {
+                        b.radio_at(g, 0., 110., t, Bind::Radio(tb, "fluentColor", ["1", "2", "3", "4", "5", "6", "7"][k]));
+                        g.y += 22.;
+                    }
+                    g.y -= 22. * 7.;
+                    for (t, v) in [("Default", "0"), ("System Accent", "8"), ("Custom", "9")] {
+                        b.radio_at(g, 120., 130., t, Bind::Radio(tb, "fluentColor", v));
+                        g.y += 22.;
+                    }
+                    let well = objc2_app_kit::NSColorWell::new(b.mtm);
+                    g.put(&well, 140., 44., 24.);
+                    b.reg(well.into_super(), Bind::TbColor, sel!(prefChanged:));
+                    g.y += 22. * 4. + 4.;
+                });
+            });
+        }),
         page(b, &|b, c, c2| {
             b.group(c, "Current Line Indicator", 270., |b, g| {
                 b.radio(g, "None", Bind::Radio(sv, "currentLineIndicator", "0"));
@@ -2112,7 +2155,7 @@ fn refresh(app: &App) {
                 Bind::Radio(g, a, v) => {
                     set_on(c, p.get(g, a) == *v);
                     enabled = match *a {
-                        "autoCAction" => p.autoc_action != 0,
+                        "fluentMono" | "fluentColor" => p.toolbar_icons != "standard",
                         "lineNumberDynamicWidth" => p.line_numbers.0,
                         _ => true,
                     };
@@ -2209,6 +2252,14 @@ fn refresh(app: &App) {
                     enabled = p.snapshot_mode;
                 }
                 Bind::BackupBrowse => enabled = p.backup_action != 0 && p.backup_use_dir,
+                Bind::TbHide => set_on(c, !p.toolbar_visible),
+                Bind::TbColor => {
+                    let [r, g, b] = crate::toolbar::colorref(p.toolbar_custom_color).map(|x| x as f64 / 255.);
+                    if let Some(well) = c.downcast_ref::<objc2_app_kit::NSColorWell>() {
+                        well.setColor(&objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.));
+                    }
+                    enabled = p.toolbar_icons != "standard" && p.toolbar_color == crate::toolbar::CUSTOM;
+                }
             }
             c.setEnabled(enabled);
             if let Some(e) = &k.echo {
@@ -2344,6 +2395,7 @@ impl App {
     pub(crate) fn apply_prefs(&self) {
         self.apply_view_all();
         self.backup_settings_changed();
+        crate::toolbar::apply();
     }
 
     pub(crate) fn pref_changed(&self, c: &NSControl) {
@@ -2525,6 +2577,16 @@ impl App {
                     return;
                 };
                 update(|x| x.backup_dir = path.to_string());
+            }
+            Bind::TbHide => update(|x| x.toolbar_visible = !on(c)),
+            Bind::TbColor => {
+                let space = objc2_app_kit::NSColorSpace::sRGBColorSpace();
+                let color = c.downcast_ref::<objc2_app_kit::NSColorWell>().map(|w| w.color());
+                if let Some(k) = color.and_then(|k| k.colorUsingColorSpace(&space)) {
+                    let v = |x: f64| (x.clamp(0., 1.) * 255.).round() as i64;
+                    let rgb = v(k.redComponent()) | v(k.greenComponent()) << 8 | v(k.blueComponent()) << 16;
+                    update(|x| x.toolbar_custom_color = rgb);
+                }
             }
         }
         if let Some((name, info, bs)) = lang_write {
@@ -2720,6 +2782,7 @@ mod tests {
             ("Auto-detection", "_fileAutoDetection"),
             ("customizedFormat", "_dateTimeFormat"),
             ("reverseDefaultOrder", "_dateTimeReverseDefaultOrder"),
+            ("visible", "_toolbarShow"),
         ];
         let no_default = [
             "edgeMultiColumnPos",
@@ -2740,6 +2803,10 @@ mod tests {
         let zero = ["margeLeft", "margeRight", "margeTop", "margeBottom"];
         let p = Prefs::default();
         for (g, a) in Prefs::KEYS {
+            // toolbar.rs checks the _tbIconInfo defaults.
+            if *g == "ToolBar" && *a != "visible" {
+                continue;
+            }
             if zero.contains(a) {
                 assert_eq!(p.get(g, a), "0", "{g} {a}");
                 continue;
@@ -2790,7 +2857,7 @@ mod tests {
         let out = patch(Some(WINDOWS), &GUI_PATH, "GUIConfig", &config_elems(&p)).unwrap();
         assert_eq!(from_config(&out), p);
         for keep in [
-            "<GUIConfig name=\"ToolBar\" visible=\"yes\">standard</GUIConfig>",
+            "<GUIConfig name=\"ToolBar\" visible=\"yes\" fluentColor=\"0\" fluentCustomColor=\"0\" fluentMono=\"no\">standard</GUIConfig>",
             "<UserDefinePair open=\"&lt;\" close=\"&gt;\" />",
             "zoom=\"3\"",
             "darkThemeName=\"DarkModeDefault.xml\" lightThemeName=\"\"",

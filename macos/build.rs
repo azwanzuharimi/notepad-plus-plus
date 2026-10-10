@@ -66,10 +66,53 @@ fn embed_native_langs() {
 }
 
 
+// An .ico file with only its 16, 32 and 64 px images: the small and large toolbar sizes at 1x and 2x.
+fn ico_1x_2x(b: &[u8]) -> Vec<u8> {
+    let le = |at: usize, n: usize| b[at..at + n].iter().rev().fold(0usize, |v, x| v << 8 | *x as usize);
+    let keep: Vec<usize> = (0..le(4, 2)).map(|i| 6 + 16 * i).filter(|&e| [16, 32, 64].contains(&b[e])).collect();
+    let mut head = vec![0, 0, 1, 0, keep.len() as u8, 0];
+    let mut data = vec![];
+    let mut at = 6 + 16 * keep.len();
+    for e in keep {
+        let (size, off) = (le(e + 8, 4), le(e + 12, 4));
+        head.extend_from_slice(&b[e..e + 8]);
+        head.extend_from_slice(&(size as u32).to_le_bytes());
+        head.extend_from_slice(&(at as u32).to_le_bytes());
+        data.extend_from_slice(&b[off..off + size]);
+        at += size;
+    }
+    head.extend(data);
+    head
+}
+
+// Writes TOOLBAR_ICONS: the toolbar icons of PowerEditor/src/icons by path in that folder, without the unused disabled icons and sizes.
+fn embed_toolbar_icons() {
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let mut out = String::from("pub const TOOLBAR_ICONS: &[(&str, &[u8])] = &[\n");
+    for d in ["light/toolbar/regular", "light/toolbar/filled", "dark/toolbar/regular", "dark/toolbar/filled", "standard/toolbar"] {
+        let ext = if d.starts_with("standard") { ".bmp" } else { "_off.ico" };
+        for f in files(&format!("../PowerEditor/src/icons/{d}"), ext) {
+            let p = fs::canonicalize(&f).unwrap();
+            let file = p.file_name().unwrap().to_str().unwrap();
+            let name = format!("{d}/{file}");
+            let mut bytes = fs::read(&p).unwrap();
+            if ext != ".bmp" {
+                bytes = ico_1x_2x(&bytes);
+            }
+            let dest = format!("{out_dir}/toolbar_{}", name.replace('/', "_"));
+            fs::write(&dest, bytes).unwrap();
+            out += &format!("    ({name:?}, include_bytes!({dest:?})),\n");
+        }
+    }
+    out += "];\n";
+    fs::write(format!("{out_dir}/toolbar_icons.rs"), out).unwrap();
+}
+
 fn main() {
     embed_apis();
     embed_function_lists();
     embed_native_langs();
+    embed_toolbar_icons();
     base()
         .files(files("../scintilla/src", ".cxx"))
         .file("../boostregex/BoostRegExSearch.cxx")
@@ -109,6 +152,7 @@ fn main() {
         "../PowerEditor/installer/APIs",
         "../PowerEditor/installer/functionList",
         "../PowerEditor/installer/nativeLang",
+        "../PowerEditor/src/icons",
     ] {
         println!("cargo:rerun-if-changed={d}");
     }

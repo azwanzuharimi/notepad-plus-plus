@@ -36,6 +36,7 @@ mod session;
 mod style_dlg;
 mod styler;
 mod tools;
+mod toolbar;
 mod udl;
 mod view;
 mod view_extras;
@@ -1455,6 +1456,7 @@ impl App {
         unsafe { w.setReleasedWhenClosed(false) };
         w.setTitle(&NSString::from_str("Notepad++"));
         w.setDelegate(Some(ProtocolObject::from_ref(self)));
+        toolbar::attach(&w);
         let tv = Retained::into_super(views::DocTabs::new(mtm));
         tv.setDelegate(Some(ProtocolObject::from_ref(self)));
         let results = sci::new_view();

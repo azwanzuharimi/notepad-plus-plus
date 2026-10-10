@@ -8,6 +8,16 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Toolbar):
+
+- The window has the Notepad++ toolbar, as a macOS toolbar below the title bar. The buttons and separators are in the Notepad++ order. Each button sends its menu command, so it is enabled, disabled, and checked as the menu item is, and a macro records it as the menu command.
+- The icons are the Notepad++ icon files (`PowerEditor/src/icons`, built into the app): Fluent UI and Filled Fluent UI, small and large, and the standard icons. In dark appearance, the dark Fluent icons show; the standard icons are not available in dark mode, as in Notepad++.
+- Preferences > Toolbar: Hide, the five icon sets, and the Fluent colorization (Complete or Partial; Red, Green, Blue, Purple, Cyan, Olive, Yellow, Default, System Accent, Custom with a colour well). It is saved in `<GUIConfig name="ToolBar" visible fluentColor fluentCustomColor fluentMono>` as in Notepad++.
+- View > Show Toolbar (Cmd+Opt+T) is the macOS item. It changes the Hide setting too.
+- A button finds its menu item by action and tag, not by title, so it works with translated menus.
+- View > Post-It and Distraction Free Mode hide the toolbar without a change to the Hide setting.
+- When the window is narrow, macOS puts the last buttons in the >> menu. Disabled buttons use the macOS dimmed look, not the Notepad++ disabled icons.
+
 2026-10-10 (Edit menu extras):
 
 - Insert > Date Time (customized) uses the Notepad++ format (`<GUIConfig name="insertDateTime" customizedFormat="..." />`, default `yyyy-MM-dd HH:mm:ss`) with the Windows pictures: `d dd ddd dddd M MM MMM MMMM y yy yyyy g h hh H HH m mm s ss t tt` and `'text'`. As in Notepad++, the time pass runs first and the date pass reads its result, so letters in quoted text can change in the second pass. Names come from the macOS locale.
@@ -61,14 +71,14 @@ Not affiliated with the Notepad++ project.
 
 2026-10-10 (Preferences):
 
-- Settings > Preferences... (Cmd+,) opens the Notepad++ Preferences window: a list of pages on the left and the page on the right. The pages are Editing 1, Editing 2, Margins/Border/Edge, New Document, Default Directory, Recent Files History, Indentation, Highlighting, Searching, Auto-Completion, Cloud & Link, Search Engine, and MISC., with the Notepad++ labels and defaults.
+- Settings > Preferences... (Cmd+,) opens the Notepad++ Preferences window: a list of pages on the left and the page on the right. The pages are Toolbar, Editing 1, Editing 2, Margins/Border/Edge, New Document, Default Directory, Recent Files History, Indentation, Highlighting, Searching, Auto-Completion, Cloud & Link, Search Engine, and MISC., with the Notepad++ labels and defaults.
 - A change applies at once (a slider when you release it) and is saved in the `<GUIConfigs>` element of `config.xml`, in the Notepad++ `<GUIConfig name="...">` format. The values of a Notepad++ `config.xml` from Windows are read. The other elements and attributes of the file stay as they are.
 - Applied now: current line indicator (frame width), caret width and blink rate, line wrap indent, smooth font, virtual space, Copy/Cut line without selection, scrolling beyond the last line, multi-editing, fold margin style, vertical edge columns (background mode), change history margin and text, line number margin (dynamic or constant width), padding, bookmark margin, the EOL, encoding, and language of new documents, "Apply to opened ANSI files", the Open and Save folder, the recent files options (with "Only File Name" and the customized length), tab size, tabs or spaces, and Backspace unindent (also for each language), and "Fill Find Field with Selected Text" (with the maximum length and the word under the caret).
 - The tab settings of a language are saved in `langs.xml` (the `tabSettings` and `backspaceUnindent` attributes of its `<Language>` element), as in Notepad++. When there is no `langs.xml`, the app first copies `langs.model.xml`, as Notepad++ does.
 - Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
 - Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
 - `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page sets them.
-- Not done: the General page (it has only Localization), the Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+- Not done: the General page (it has only Localization), the Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
 
 2026-10-10 (User Defined Languages):
 
