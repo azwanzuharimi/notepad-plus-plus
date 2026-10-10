@@ -7,6 +7,7 @@ mod config;
 mod edit;
 mod encoding;
 mod fileops;
+mod finder;
 mod lang;
 mod language;
 mod macros;
@@ -46,7 +47,7 @@ const STATUS_H: f64 = 22.;
 // Notepad++ status bar part widths; 0 takes the rest.
 const STATUS_WIDTHS: [f64; 6] = [0., 220., 260., 110., 120., 40.];
 
-static FIF_DONE: Mutex<Option<(bool, Result<FifOut, String>)>> = Mutex::new(None);
+static FIF_DONE: Mutex<Option<(FifArgs, Result<FifOut, String>)>> = Mutex::new(None);
 
 fn ns(s: &str) -> Retained<NSString> {
     NSString::from_str(s)
@@ -217,6 +218,9 @@ define_class!(
         #[unsafe(method(openResult:))]
         fn open_result(&self, _s: Option<&AnyObject>) {
             let (line, at) = self.ivars().pending_hit.get();
+            if self.toggle_result_header(line) {
+                return;
+            }
             let hit = self.ivars().result_lines.borrow().get(line as usize).and_then(|l| Some((l.hit.clone()?, l.marks.clone())));
             let Some(((path, ranges), marks)) = hit else { return };
             let k = marks.iter().position(|&(s, e)| s <= at && at <= e).unwrap_or(0);
@@ -340,7 +344,8 @@ define_class!(
 
         #[unsafe(method(fifDone:))]
         fn fif_done(&self, _s: Option<&AnyObject>) {
-            let Some((replace, r)) = FIF_DONE.lock().unwrap().take() else { return };
+            let Some((args, r)) = FIF_DONE.lock().unwrap().take() else { return };
+            let replace = args.replace;
             self.ivars().fif_running.set(false);
             if replace {
                 self.ivars().replacing.set(false);
@@ -349,9 +354,12 @@ define_class!(
             let c = &self.fif_ui().c;
             match r {
                 Err(e) => c.set_status(&e),
-                Ok(out) if replace => {
+                Ok(mut out) if replace => {
                     let not_reloaded = self.reload_changed(&out.changed);
-                    c.set_status(&search::replace_in_files_status(&out, &not_reloaded));
+                    c.set_status(&match self.replace_in_tabs(&args.opts, &mut out) {
+                        Ok(()) => search::replace_in_files_status(&out, &not_reloaded),
+                        Err(e) => e,
+                    });
                 }
                 Ok(out) => {
                     c.set_status("");
@@ -1070,6 +1078,7 @@ impl App {
         let results = sci::new_view();
         sci::set_delegate(&results, self);
         let markings = sci::setup_results(&results, cfg());
+        finder::simple_fold_markers(&results);
         let split = NSSplitView::new(mtm);
         split.setVertical(false);
         split.setDividerStyle(NSSplitViewDividerStyle::Thin);
@@ -1226,42 +1235,10 @@ impl App {
         );
     }
 
-    // Port of FindReplaceDlg::processReplace.
     fn replace_once(&self, v: &NSView, o: &search::Opts) -> Result<String, String> {
-        let doc = sci::doc(v);
-        if doc.read_only() {
-            return Err(search::REPLACE_READ_ONLY.into());
-        }
-        let cur = sci::selection(v);
-        let Some((m, _)) = search::find_next(&doc, o, cur, false, Next::ForReplace)? else {
-            return Ok(search::replace_not_found_status(o));
-        };
-        if m != cur {
-            sci::select(v, m);
-            return Ok(String::new());
-        }
-        let n = doc.replace(m.0, m.1 - m.0, &o.replace_bytes(), o.regex());
-        if n < 0 {
-            return Err("Replace: Cannot replace text.".into());
-        }
-        let p = m.0 + n;
-        sci::select(v, (p, p));
-        Ok(
-            match search::find_next(&doc, o, (p, p), false, Next::AfterReplace)? {
-                Some((n, w)) => {
-                    sci::select(v, n);
-                    match w {
-                        Wrap::End => search::REPLACE_END_REACHED,
-                        Wrap::Top => search::REPLACE_TOP_REACHED,
-                        Wrap::No => {
-                            "Replace: 1 occurrence was replaced. The next occurrence found."
-                        }
-                    }
-                }
-                None => "Replace: 1 occurrence was replaced. No more occurrences were found.",
-            }
-            .to_string(),
-        )
+        let (msg, sel) = search::replace_once(&sci::doc(v), o, sci::selection(v))?;
+        sci::select(v, sel);
+        Ok(msg)
     }
 
     fn start_fif(&self, replace: bool) {
@@ -1297,8 +1274,7 @@ impl App {
             hidden: panel::on(&u.hidden),
             opts,
             replace,
-            skip: self.unsaved_paths(),
-            encs: self.tab_encodings(),
+            open: self.open_texts(),
         };
         u.c.set_status(if replace {
             "Replace In Files progress..."
@@ -1311,32 +1287,13 @@ impl App {
             self.set_tabs_read_only(true);
         }
         let app = self as *const Self as usize;
-        std::thread::spawn(move || {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                search::find_in_files(&args)
-            }))
-            .unwrap_or_else(|_| Err("Find in Files stopped because of an internal error.".into()));
-            *FIF_DONE.lock().unwrap() = Some((args.replace, r));
+        search::spawn_find_in_files(args, move |args, r| {
+            *FIF_DONE.lock().unwrap() = Some((args, r));
             let app = unsafe { &*(app as *const AnyObject) };
             let _: () = unsafe {
                 msg_send![app, performSelectorOnMainThread: sel!(fifDone:), withObject: None::<&AnyObject>, waitUntilDone: false]
             };
         });
-    }
-
-    fn unsaved_paths(&self) -> Vec<PathBuf> {
-        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
-        tabs.iter()
-            .filter(|t| self.dirty(t))
-            .filter_map(|t| t.path.as_deref().map(search::canonical))
-            .collect()
-    }
-
-    fn tab_encodings(&self) -> Vec<(PathBuf, Enc)> {
-        let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
-        tabs.iter()
-            .filter_map(|t| Some((search::canonical(t.path.as_deref()?), t.enc)))
-            .collect()
     }
 
     fn set_tabs_read_only(&self, on: bool) {
@@ -1384,6 +1341,7 @@ impl App {
         all.extend(self.ivars().result_lines.take());
         sci::prepend_results(v, *m, &all, &text);
         *self.ivars().result_lines.borrow_mut() = all;
+        self.collapse_old_searches();
         self.reveal_results();
     }
 
