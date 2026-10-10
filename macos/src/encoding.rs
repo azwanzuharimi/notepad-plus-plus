@@ -426,13 +426,49 @@ fn decode_cp(b: &[u8], cp: u32) -> (Vec<u8>, bool) {
         let s: String = b.iter().map(|&c| t.dec[c as usize]).collect();
         return (s.into_bytes(), false);
     }
-    let Some(s) = cf_encoding(cp).and_then(|e| cf_string(b, e)) else {
+    let Some(e) = cf_encoding(cp) else {
         return (String::from_utf8_lossy(b).into_owned().into_bytes(), true);
     };
-    let mut out = vec![];
-    cf_bytes(s, 0, CF_UTF8, &mut out);
-    unsafe { CFRelease(s) };
-    (out, false)
+    let to_utf8 = |b: &[u8], out: &mut Vec<u8>| {
+        let s = cf_string(b, e)?;
+        cf_bytes(s, 0, CF_UTF8, out);
+        unsafe { CFRelease(s) };
+        Some(())
+    };
+    let (mut out, mut lost, mut rest) = (vec![], false, b);
+    // One bad sequence makes CoreFoundation reject all bytes, so decode the longest good run and skip one byte.
+    while to_utf8(rest, &mut out).is_none() {
+        let mut ends = vec![0];
+        let mut i = 0;
+        while i < rest.len() {
+            i += if lead_byte(cp, rest[i]) { 2 } else { 1 };
+            ends.push(i.min(rest.len()));
+        }
+        let (mut lo, mut hi) = (0, ends.len() - 1);
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            match cf_string(&rest[..ends[mid]], e) {
+                Some(s) => {
+                    unsafe { CFRelease(s) };
+                    lo = mid;
+                }
+                None => hi = mid - 1,
+            }
+        }
+        to_utf8(&rest[..ends[lo]], &mut out);
+        out.extend("\u{FFFD}".as_bytes());
+        lost = true;
+        rest = &rest[ends[lo] + 1..];
+    }
+    (out, lost)
+}
+
+fn lead_byte(cp: u32, c: u8) -> bool {
+    match cp {
+        932 => matches!(c, 0x81..=0x9F | 0xE0..=0xFC),
+        51949 => (0xA1..=0xFE).contains(&c),
+        _ => (0x81..=0xFE).contains(&c),
+    }
 }
 
 fn decode_utf16(b: &[u8], be: bool) -> (Vec<u8>, bool) {
@@ -545,7 +581,11 @@ pub fn encode(text: &[u8], e: Enc, lossy: bool) -> Result<Vec<u8>, usize> {
         }
         if !chunk.invalid().is_empty() {
             bad += 1;
-            out.push(b'?');
+            match e {
+                Enc::Utf16Be => out.extend(b"\0?"),
+                Enc::Utf16Le | Enc::Utf16LeNoBom => out.extend(b"?\0"),
+                _ => out.push(b'?'),
+            }
         }
     }
     if bad > 0 && !lossy {
@@ -719,6 +759,38 @@ mod tests {
         assert!(!decode(b"\xFF\xFEa\0", Enc::Utf16Le).1);
         assert!(decode(b"\x82\xA0\xFF\xFF", Enc::Cp(932)).1);
         assert!(!decode(b"a\xFFb", Enc::Utf8).1);
+    }
+
+    #[test]
+    fn invalid_utf8_to_utf16_keeps_alignment() {
+        assert_eq!(
+            encode(b"a\xFFb", Enc::Utf16Le, true).unwrap(),
+            b"\xFF\xFEa\0?\0b\0"
+        );
+        assert_eq!(
+            encode(b"a\xFFb", Enc::Utf16Be, true).unwrap(),
+            b"\xFE\xFF\0a\0?\0b"
+        );
+        assert_eq!(encode(b"a\xFFb", Enc::Utf16Le, false), Err(1));
+    }
+
+    #[test]
+    fn multi_byte_decodes_around_bad_byte() {
+        let mut b = cp_bytes(JA, 932);
+        let mid = cp_bytes("いろは", 932).len();
+        b.insert(mid, 0xA0);
+        let (text, lost) = decode(&b, Enc::Cp(932));
+        let want = format!("いろは\u{FFFD}{}", &JA["いろは".len()..]);
+        assert_eq!((String::from_utf8(text).unwrap(), lost), (want, true));
+        let (text, lost) = decode(b"\x82\xA0\x81 \xA0\x82", Enc::Cp(932));
+        assert_eq!(
+            (text.as_slice(), lost),
+            ("あ\u{FFFD} \u{FFFD}\u{FFFD}".as_bytes(), true)
+        );
+        assert_eq!(
+            decode(&cp_bytes(JA, 936), Enc::Cp(936)),
+            (JA.as_bytes().to_vec(), false)
+        );
     }
 
     #[test]
