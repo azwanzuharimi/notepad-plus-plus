@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::{cfg, item, lang, nested, ns, sci, search, tagged, App, Tab};
+use crate::{item, nested, ns, sci, search, tagged, App, Tab};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{sel, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -315,7 +315,7 @@ impl App {
             t.name = file_name(&new);
             t.path = Some(new.clone());
         }
-        sci::apply_language(&t.view, cfg(), lang::language_for_path(cfg(), &new));
+        self.apply_tab_language(i);
         self.refresh_title(i);
         self.update_status();
     }
@@ -359,7 +359,9 @@ impl App {
             if let Some(t) = self.ivars().tabs.borrow_mut().get_mut(i) {
                 t.name = name;
             }
+            self.apply_tab_language(i);
             self.refresh_title(i);
+            self.update_status();
         }
     }
 

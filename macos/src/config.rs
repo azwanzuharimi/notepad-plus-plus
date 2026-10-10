@@ -7,6 +7,9 @@ pub struct Language {
     pub name: String,
     pub exts: Vec<String>,
     pub keywords: Vec<(String, String)>,
+    pub comment_line: String,
+    pub comment_start: String,
+    pub comment_end: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -75,6 +78,9 @@ pub fn load() -> Config {
                         .map(str::to_lowercase)
                         .collect(),
                     keywords: vec![],
+                    comment_line: attr(&e, "commentLine"),
+                    comment_start: attr(&e, "commentStart"),
+                    comment_end: attr(&e, "commentEnd"),
                 })
             }
             Event::Start(e) if e.name().as_ref() == "Keywords" => {
@@ -144,6 +150,29 @@ mod tests {
         assert!(py.exts.contains(&"py".to_string()));
         let kw = &py.keywords.iter().find(|(k, _)| k == "instre1").unwrap().1;
         assert!(kw.split_whitespace().any(|w| w == "lambda"));
+    }
+
+    #[test]
+    fn comment_tokens_parsed() {
+        let c = load();
+        let get = |n: &str| c.languages.iter().find(|l| l.name == n).unwrap();
+        let cpp = get("cpp");
+        assert_eq!(
+            (
+                cpp.comment_line.as_str(),
+                cpp.comment_start.as_str(),
+                cpp.comment_end.as_str()
+            ),
+            ("//", "/*", "*/")
+        );
+        let html = get("html");
+        assert_eq!(
+            (html.comment_start.as_str(), html.comment_end.as_str()),
+            ("<!--", "-->")
+        );
+        assert_eq!(get("vb").comment_line, "'");
+        assert_eq!(get("batch").comment_line, "REM");
+        assert!(get("normal").comment_line.is_empty());
     }
 
     #[test]

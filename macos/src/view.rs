@@ -338,10 +338,7 @@ fn date(t: SystemTime) -> String {
 }
 
 fn lang_of(t: &Tab) -> &'static str {
-    t.path
-        .as_deref()
-        .and_then(|p| lang::language_for_path(cfg(), p))
-        .map_or("normal", |l| l.name.as_str())
+    crate::language::tab_language(t).map_or("normal", |l| l.name.as_str())
 }
 
 fn fold_line(v: &NSView, line: isize, expand: bool) {
