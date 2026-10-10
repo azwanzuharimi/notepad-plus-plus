@@ -190,6 +190,7 @@ prefs! {
     tab_inactive: bool = true => "TabBar" "drawInactiveTab",
     tab_top_bar: bool = true => "TabBar" "drawTopBar",
     tab_close: bool = true => "TabBar" "closeButton",
+    tab_pin: bool = true => "TabBar" "pinButton",
 }
 
 // NppGUI::AutocStatus.
@@ -1416,6 +1417,7 @@ fn build_pages(b: &mut Build) -> Vec<Retained<NSView>> {
             b.check(c2, "Draw a coloured bar on active tab", Bind::Check(t, "drawTopBar"));
             c2.y += 10.;
             b.check(c2, "Show close button", Bind::Check(t, "closeButton"));
+            b.check(c2, "Enable pin tab feature", Bind::Check(t, "pinButton"));
         }),
         page(b, &|b, c, c2| {
             b.group(c, "Current Line Indicator", 270., |b, g| {

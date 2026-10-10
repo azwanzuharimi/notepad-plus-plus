@@ -265,9 +265,15 @@ fn tab_items() -> Vec<(&'static str, &'static str, Option<(Sel, isize)>)> {
     vec![
         ("Close", "", Some((sel!(closeTab:), -1))),
         ("Close All BUT This", multi, close(1)),
+        (
+            "Close All BUT Pinned",
+            multi,
+            Some((sel!(closeAllButPinned:), -1)),
+        ),
         ("Close All to the Left", multi, close(2)),
         ("Close All to the Right", multi, close(3)),
         ("Close All Unchanged", multi, close(4)),
+        ("Pin Tab", "", Some((sel!(pinTab:), -1))),
         ("Save", "", Some((sel!(saveDocument:), -1))),
         ("Save As...", "", Some((sel!(saveDocumentAs:), -1))),
         (
@@ -697,9 +703,10 @@ mod tests {
             .collect();
         let out = layout(items);
         assert_eq!(out[0], Out::Cmd("Close"));
-        assert!(matches!(&out[1], Out::Folder(n, s) if n == "Close Multiple Tabs" && s.len() == 4));
+        assert!(matches!(&out[1], Out::Folder(n, s) if n == "Close Multiple Tabs" && s.len() == 5));
+        assert_eq!(out[2], Out::Cmd("Pin Tab"));
         assert!(
-            matches!(&out[4], Out::Folder(n, s) if n == "Open into" && s.len() == 4 && s[2] == Out::Sep)
+            matches!(&out[5], Out::Folder(n, s) if n == "Open into" && s.len() == 4 && s[2] == Out::Sep)
         );
         assert!(
             matches!(out.last(), Some(Out::Folder(n, s)) if n == "Move Document" && s.len() == 2)

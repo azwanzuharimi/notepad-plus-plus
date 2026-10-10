@@ -116,6 +116,13 @@ pub fn file_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
             "Close Multiple Documents",
             vec![
                 close("Close All but Active Document", Close::ButActive),
+                item(
+                    mtm,
+                    "Close All but Pinned Documents",
+                    sel!(closeAllButPinned:),
+                    "",
+                    t,
+                ),
                 close("Close All to the Left", Close::Left),
                 close("Close All to the Right", Close::Right),
                 close("Close All Unchanged", Close::Unchanged),

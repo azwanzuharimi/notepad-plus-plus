@@ -1164,6 +1164,18 @@ define_class!(
     }
 
     impl App {
+        #[unsafe(method(pinTab:))]
+        fn pin_tab_action(&self, _s: Option<&AnyObject>) {
+            self.toggle_pin();
+        }
+
+        #[unsafe(method(closeAllButPinned:))]
+        fn close_all_but_pinned_action(&self, _s: Option<&AnyObject>) {
+            self.close_all_but_pinned();
+        }
+    }
+
+    impl App {
         #[unsafe(method(editContextMenu:))]
         fn edit_context_menu_action(&self, _s: Option<&AnyObject>) {
             self.edit_context_menu();
@@ -1781,6 +1793,9 @@ impl App {
             return r;
         }
         if let Some(r) = self.validate_views(item) {
+            return r;
+        }
+        if let Some(r) = self.validate_tabbar(item) {
             return r;
         }
         let Some(action) = item.action() else {

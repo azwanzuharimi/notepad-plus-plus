@@ -7,8 +7,8 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{
     NSAccessibility, NSAccessibilityElement, NSAccessibilityRadioButtonRole, NSApplication,
     NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSEvent, NSEventMask, NSEventModifierFlags,
-    NSEventType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSGraphicsContext,
-    NSMenu, NSStringDrawing, NSTabView, NSTabViewItem, NSView,
+    NSEventType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSGraphicsContext, NSImage, NSImageSymbolConfiguration,
+    NSMenu, NSMenuItem, NSStringDrawing, NSTabView, NSTabViewItem, NSView,
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSPoint, NSRect, NSSize, NSString};
 use std::cell::{Cell, RefCell};
@@ -18,6 +18,7 @@ const PAD: f64 = 8.;
 const ICON: f64 = 8.;
 const GAP: f64 = 5.;
 const CLOSE: f64 = 14.;
+const PIN: f64 = 12.;
 const MIN_W: f64 = 48.;
 const MAX_W: f64 = 240.;
 const ARROW_W: f64 = 18.;
@@ -41,6 +42,7 @@ pub struct Opts {
     pub top_bar: bool,
     pub inactive: bool,
     pub drag: bool,
+    pub pin: bool,
 }
 
 pub fn opts() -> Opts {
@@ -51,6 +53,7 @@ pub fn opts() -> Opts {
         top_bar: p.tab_top_bar,
         inactive: p.tab_inactive,
         drag: p.tab_drag,
+        pin: p.tab_pin,
     }
 }
 
@@ -61,9 +64,10 @@ pub struct Slot {
     pub w: f64,
 }
 
-pub fn tab_width(text: f64, close: bool) -> f64 {
+pub fn tab_width(text: f64, close: bool, pin: bool) -> f64 {
     let close = if close { GAP + CLOSE } else { 0. };
-    (PAD + ICON + GAP + text + close + PAD).clamp(MIN_W, MAX_W)
+    let pin = if pin { GAP + PIN } else { 0. };
+    (PAD + ICON + GAP + text + pin + close + PAD).clamp(MIN_W, MAX_W)
 }
 
 // The tabs from `first` that fit in `width`; when not all tabs fit, two arrows take the right end.
@@ -102,6 +106,29 @@ pub fn on_close(s: &Slot, x: f64) -> bool {
     x >= c && x < c + CLOSE
 }
 
+pub fn pin_x(s: &Slot, close: bool) -> f64 {
+    if close {
+        close_x(s) - GAP - PIN
+    } else {
+        s.x + s.w - PAD - PIN
+    }
+}
+
+pub fn on_pin(s: &Slot, close: bool, x: f64) -> bool {
+    let p = pin_x(s, close);
+    x >= p && x < p + PIN
+}
+
+// TabBarPlus: a pinned tab stays among the pinned tabs at the start, an unpinned tab stays after them.
+pub fn pin_drop(pinned: &[bool], from: usize, slot: usize) -> usize {
+    let n = pinned.iter().filter(|&&p| p).count();
+    if pinned.get(from).copied().unwrap_or(false) {
+        slot.min(n)
+    } else {
+        slot.max(n)
+    }
+}
+
 // The first visible tab after a scroll that shows tab `sel`.
 pub fn scroll_to(widths: &[f64], first: usize, sel: usize, width: f64) -> usize {
     let mut f = first.min(sel);
@@ -130,6 +157,10 @@ pub fn moved_to(from: usize, slot: usize) -> usize {
     } else {
         slot
     }
+}
+
+thread_local! {
+    static PINNED: RefCell<Vec<Retained<NSTabViewItem>>> = const { RefCell::new(vec![]) };
 }
 
 #[derive(Default)]
@@ -218,6 +249,25 @@ fn rgb(r: f64, g: f64, b: f64) -> Retained<NSColor> {
     NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.)
 }
 
+fn draw_pin(pinned: bool, x: f64) {
+    let name = NSString::from_str(if pinned { "pin.fill" } else { "pin" });
+    let Some(img) = NSImage::imageWithSystemSymbolName_accessibilityDescription(&name, None) else {
+        return;
+    };
+    let color = if pinned {
+        rgb(250. / 255., 170. / 255., 60. / 255.)
+    } else {
+        NSColor::tertiaryLabelColor()
+    };
+    let cfg = NSImageSymbolConfiguration::configurationWithHierarchicalColor(&color);
+    if let Some(img) = img.imageWithSymbolConfiguration(&cfg) {
+        img.drawInRect(NSRect::new(
+            NSPoint::new(x, (BAR_H - PIN) / 2.),
+            NSSize::new(PIN, PIN),
+        ));
+    }
+}
+
 fn state_color(s: State) -> Retained<NSColor> {
     match s {
         State::Saved => rgb(0.2, 0.45, 0.85),
@@ -271,31 +321,31 @@ impl TabBar {
         usize::try_from(tv.indexOfTabViewItem(&s)).ok()
     }
 
-    fn labels(&self) -> Vec<(String, State)> {
+    fn labels(&self) -> Vec<(String, State, bool)> {
         let items = self.items();
         let app = app(self.mtm());
         items
             .iter()
             .map(|it| match &app {
                 Some(a) => a.tab_bar_info(it),
-                None => (it.label().to_string(), State::Saved),
+                None => (it.label().to_string(), State::Saved, false),
             })
             .collect()
     }
 
-    fn widths(&self, labels: &[(String, State)]) -> Vec<f64> {
+    fn widths(&self, labels: &[(String, State, bool)]) -> Vec<f64> {
         let a = attrs(&NSColor::labelColor());
-        let close = opts().close;
+        let o = opts();
         labels
             .iter()
-            .map(|(l, _)| {
+            .map(|(l, _, _)| {
                 let w = unsafe { NSString::from_str(l).sizeWithAttributes(Some(&a)) }.width;
-                tab_width(w.ceil(), close)
+                tab_width(w.ceil(), o.close, o.pin)
             })
             .collect()
     }
 
-    fn relayout(&self, labels: &[(String, State)]) -> Vec<Slot> {
+    fn relayout(&self, labels: &[(String, State, bool)]) -> Vec<Slot> {
         let ws = self.widths(labels);
         let width = self.bounds().size.width;
         let mut first = self.ivars().first.get();
@@ -329,7 +379,7 @@ impl TabBar {
         let sel = self.selected();
         let focused = self.is_active_view();
         for s in &slots {
-            let Some((label, state)) = labels.get(s.i) else {
+            let Some((label, state, pinned)) = labels.get(s.i) else {
                 continue;
             };
             let r = NSRect::new(NSPoint::new(s.x, 0.), NSSize::new(s.w, BAR_H));
@@ -369,11 +419,16 @@ impl TabBar {
             };
             let a = attrs(&fg);
             let tx = s.x + PAD + ICON + GAP;
-            let tw = if o.close {
+            let tw = if o.pin {
+                pin_x(s, o.close) - GAP
+            } else if o.close {
                 close_x(s) - GAP
             } else {
                 s.x + s.w - PAD
             } - tx;
+            if o.pin {
+                draw_pin(*pinned, pin_x(s, o.close));
+            }
             NSGraphicsContext::saveGraphicsState_class();
             NSBezierPath::clipRect(NSRect::new(
                 NSPoint::new(tx, 0.),
@@ -478,6 +533,12 @@ impl TabBar {
             self.close(s.i);
             return;
         }
+        if o.pin && on_pin(&s, o.close, p.x) {
+            self.select(&tv, s.i);
+            let app = NSApplication::sharedApplication(self.mtm());
+            unsafe { app.sendAction_to_from(sel!(pinTab:), None, Some(self)) };
+            return;
+        }
         self.select(&tv, s.i);
         if o.drag && n == 1 {
             self.track_drag(e, s.i);
@@ -536,7 +597,7 @@ impl TabBar {
             .iter()
             .zip(ax.iter())
             .filter_map(|(s, el)| {
-                let (l, _) = labels.get(s.i)?;
+                let (l, _, _) = labels.get(s.i)?;
                 let r = NSRect::new(NSPoint::new(s.x, 0.), NSSize::new(s.w, BAR_H));
                 el.setAccessibilityTitle(Some(&NSString::from_str(l)));
                 unsafe {
@@ -554,7 +615,8 @@ impl TabBar {
 
 impl App {
     // The tab label without the modified mark, and the DocTabView.cpp image state.
-    pub(crate) fn tab_bar_info(&self, item: &NSTabViewItem) -> (String, State) {
+    pub(crate) fn tab_bar_info(&self, item: &NSTabViewItem) -> (String, State, bool) {
+        let pinned = self.item_pinned(item);
         let t = self
             .ivars()
             .tabs
@@ -563,7 +625,7 @@ impl App {
             .find(|t| std::ptr::eq(&*t.item, item))
             .cloned();
         let Some(t) = t else {
-            return (item.label().to_string(), State::Saved);
+            return (item.label().to_string(), State::Saved, pinned);
         };
         let state = if self.monitored(item) {
             State::Monitoring
@@ -574,7 +636,77 @@ impl App {
         } else {
             State::Saved
         };
-        (item.label().to_string(), state)
+        (item.label().to_string(), state, pinned)
+    }
+
+    // Buffer::isPinned: a tab is pinned when it or a clone of it is pinned.
+    fn item_pinned(&self, item: &NSTabViewItem) -> bool {
+        let i = self
+            .ivars()
+            .tabs
+            .borrow()
+            .iter()
+            .position(|t| std::ptr::eq(&*t.item, item));
+        i.is_some_and(|i| self.pinned_at(i))
+    }
+
+    pub(crate) fn pinned_at(&self, i: usize) -> bool {
+        let items = self.with_clones(i);
+        PINNED.with(|p| {
+            p.borrow()
+                .iter()
+                .any(|x| items.iter().any(|it| std::ptr::eq(&**x, &**it)))
+        })
+    }
+
+    // NppNotification.cpp TCN_TABPINNED: a pinned tab goes to the start of its view, an unpinned tab to the end.
+    pub(crate) fn toggle_pin(&self) {
+        let Some(i) = self.current() else { return };
+        let items = self.with_clones(i);
+        let was = self.pinned_at(i);
+        let tabs: Vec<Retained<NSTabViewItem>> =
+            self.ivars().tabs.borrow().iter().map(|t| t.item.clone()).collect();
+        PINNED.with(|p| {
+            let mut p = p.borrow_mut();
+            p.retain(|x| tabs.iter().any(|t| std::ptr::eq(&**t, &**x)));
+            if was {
+                p.retain(|x| !items.iter().any(|it| std::ptr::eq(&**x, &**it)));
+            } else if let Some(it) = items.first() {
+                p.push(it.clone());
+            }
+        });
+        let r = self.view_range(self.pane_of(i));
+        let to = if was { r.end - 1 } else { r.start };
+        if to != i {
+            self.move_tab_to(i, to);
+        }
+        self.tab_bars_redraw();
+    }
+
+    // NppIO.cpp fileCloseAllButPinned.
+    pub(crate) fn close_all_but_pinned(&self) {
+        let n = self.ivars().tabs.borrow().len();
+        let items: Vec<Retained<NSTabViewItem>> = (0..n)
+            .filter(|&i| !self.pinned_at(i))
+            .filter_map(|i| self.tab(i).map(|t| t.item))
+            .collect();
+        if items.is_empty() || !self.confirm_close_all(&items) {
+            return;
+        }
+        self.drop_tabs(&items);
+    }
+
+    pub(crate) fn validate_tabbar(&self, item: &NSMenuItem) -> Option<bool> {
+        let a = item.action()?;
+        if a == sel!(pinTab:) {
+            let pinned = self.current().is_some_and(|i| self.pinned_at(i));
+            item.setTitle(&NSString::from_str(if pinned { "Unpin Tab" } else { "Pin Tab" }));
+            Some(opts().pin && self.current().is_some())
+        } else if a == sel!(closeAllButPinned:) {
+            Some(self.current().is_some())
+        } else {
+            None
+        }
     }
 
     pub(crate) fn tab_bars_redraw(&self) {
@@ -618,7 +750,8 @@ impl App {
         let slot = bar.drop_index(at);
         let from = self.view_range(from_p).start + i;
         if to_p == from_p {
-            let to = moved_to(i, slot);
+            let pinned: Vec<bool> = self.view_range(to_p).map(|k| self.pinned_at(k)).collect();
+            let to = moved_to(i, pin_drop(&pinned, i, slot));
             if to != i {
                 self.move_tab_to(from, self.view_range(to_p).start + to);
             }
@@ -648,10 +781,14 @@ mod tests {
 
     #[test]
     fn widths_and_layout() {
-        assert_eq!(tab_width(0., false), MIN_W);
-        assert_eq!(tab_width(1000., true), MAX_W);
+        assert_eq!(tab_width(0., false, false), MIN_W);
+        assert_eq!(tab_width(1000., true, true), MAX_W);
         assert_eq!(
-            tab_width(50., true),
+            tab_width(50., true, true) - tab_width(50., true, false),
+            GAP + PIN
+        );
+        assert_eq!(
+            tab_width(50., true, false),
             PAD + ICON + GAP + 50. + GAP + CLOSE + PAD
         );
         let ws = [100., 100., 100.];
@@ -687,6 +824,9 @@ mod tests {
         assert!(on_close(&t, 100. - PAD - 1.));
         assert!(!on_close(&t, 100. - PAD));
         assert!(!on_close(&t, 50.));
+        assert!(on_pin(&t, true, close_x(&t) - GAP - 1.));
+        assert!(!on_pin(&t, true, close_x(&t)));
+        assert!(on_pin(&t, false, 100. - PAD - 1.));
     }
 
     #[test]
@@ -712,5 +852,16 @@ mod tests {
         assert_eq!(moved_to(2, 0), 0);
         assert_eq!(moved_to(1, 1), 1);
         assert_eq!(moved_to(1, 2), 1);
+    }
+
+    #[test]
+    fn pinned_tabs_stay_first() {
+        let pinned = [true, true, false, false];
+        assert_eq!(pin_drop(&pinned, 0, 4), 2);
+        assert_eq!(pin_drop(&pinned, 1, 0), 0);
+        assert_eq!(pin_drop(&pinned, 3, 0), 2);
+        assert_eq!(pin_drop(&pinned, 2, 4), 4);
+        assert_eq!(pin_drop(&[false, false], 0, 0), 0);
+        assert_eq!(moved_to(0, pin_drop(&pinned, 0, 4)), 1);
     }
 }
