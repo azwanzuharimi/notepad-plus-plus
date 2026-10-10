@@ -484,8 +484,7 @@ impl App {
         let mtm = self.mtm();
         let Some(menu) = NSApplication::sharedApplication(mtm)
             .mainMenu()
-            .and_then(|m| m.itemWithTitle(&ns("Language")))
-            .and_then(|i| i.submenu())
+            .and_then(|m| crate::l10n::bar_menu(&m, "Language"))
         else {
             return;
         };
