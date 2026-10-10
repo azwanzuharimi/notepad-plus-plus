@@ -226,6 +226,10 @@ impl Opts {
         self.bytes(&self.replace)
     }
 
+    pub fn find_in(&self, doc: &Doc, s: isize, e: isize) -> Result<Option<(isize, isize)>, String> {
+        doc.find(s, e, &self.bytes(&self.find), self.flags())
+    }
+
     pub fn regex(&self) -> bool {
         self.mode == Mode::Regex
     }

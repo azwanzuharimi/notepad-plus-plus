@@ -617,6 +617,8 @@ pub fn search_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained
     let (f2, f3, f4, f7) = ("\u{F705}", "\u{F706}", "\u{F707}", "\u{F70A}");
     let replace = item(mtm, "Replace...", sel!(showReplace:), "f", t);
     replace.setKeyEquivalentModifierMask(cmd | opt);
+    let incremental = item(mtm, "Incremental Search", sel!(showIncrementalSearch:), "i", t);
+    incremental.setKeyEquivalentModifierMask(cmd | opt);
     vec![
         item(mtm, "Find...", sel!(showFind:), "f", t),
         item(mtm, "Find in Files...", sel!(showFindInFiles:), "F", t),
@@ -632,6 +634,7 @@ pub fn search_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained
             cmd | opt | shift,
         ),
         replace,
+        incremental,
         c("Search Results Window", RESULTS_WINDOW, f7, none),
         c("Next Search Result", NEXT_RESULT, f4, none),
         c("Previous Search Result", PREV_RESULT, f4, shift),

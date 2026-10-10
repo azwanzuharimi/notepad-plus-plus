@@ -45,7 +45,7 @@ const IDF_REDOTMATCHNL: isize = 1024;
 // Paste calls Scintilla directly on macOS, so Scintilla does not record it; Notepad++ records SCI_PASTE.
 const SCI_ACTIONS: [(&str, i32); 1] = [("paste:", 2179)];
 // Commands that Notepad++ does not record as type 2 steps; they still play back.
-const NOT_RECORDED: [&str; 39] = [
+const NOT_RECORDED: [&str; 40] = [
     "IDM_EDIT_CUT",
     "IDM_EDIT_COPY",
     "IDM_EDIT_PASTE",
@@ -55,6 +55,7 @@ const NOT_RECORDED: [&str; 39] = [
     "IDM_VIEW_TAB_START",
     "IDM_VIEW_TAB_END",
     "IDM_FOCUS_ON_FOUND_RESULTS",
+    "IDM_SEARCH_FINDINCREMENT",
     "IDM_SEARCH_GOTONEXTFOUND",
     "IDM_SEARCH_GOTOPREVFOUND",
     "IDM_SEARCH_CHANGED_NEXT",
@@ -167,6 +168,7 @@ fn menu_cmds() -> Vec<Cmd> {
         ("IDM_EDIT_AUTOCOMPLETE_PATH", 50006, "autoComplete:", 5),
         ("IDM_SEARCH_FINDNEXT", 43002, "findNext:", -1),
         ("IDM_SEARCH_FINDPREV", 43010, "findPrevious:", -1),
+        ("IDM_SEARCH_FINDINCREMENT", 43011, "showIncrementalSearch:", -1),
         ("IDM_SEARCH_SETANDFINDNEXT", 43048, "searchCmd:", 0),
         ("IDM_SEARCH_SETANDFINDPREV", 43049, "searchCmd:", 1),
         ("IDM_SEARCH_VOLATILE_FINDNEXT", 43014, "searchCmd:", 2),

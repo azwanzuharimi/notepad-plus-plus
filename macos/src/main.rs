@@ -8,6 +8,7 @@ mod edit;
 mod encoding;
 mod fileops;
 mod finder;
+mod incsearch;
 mod lang;
 mod language;
 mod macros;
@@ -984,6 +985,13 @@ define_class!(
         #[unsafe(method(pasteBinary:))]
         fn paste_binary_action(&self, _s: Option<&AnyObject>) {
             self.paste_binary();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(showIncrementalSearch:))]
+        fn show_incremental_search_action(&self, _s: Option<&AnyObject>) {
+            self.show_incremental_search();
         }
     }
 
