@@ -183,8 +183,9 @@ impl App {
         let p = NSSavePanel::savePanel(self.mtm());
         p.setTitle(Some(&ns(title)));
         p.setNameFieldStringValue(&ns(&tab.name));
-        if let Some(dir) = tab.path.as_deref().and_then(Path::parent) {
-            p.setDirectoryURL(Some(&file_url(dir)));
+        let dir = tab.path.as_deref().and_then(Path::parent).map(Path::to_path_buf);
+        if let Some(dir) = dir.or_else(|| crate::prefs::dialog_dir(None)) {
+            p.setDirectoryURL(Some(&file_url(&dir)));
         }
         if title == "Rename" {
             p.setPrompt(Some(&ns("Rename")));
@@ -193,6 +194,7 @@ impl App {
             return None;
         }
         let path = PathBuf::from(p.URL()?.path()?.to_string());
+        crate::prefs::used_file(&path);
         if let Some(other) = self.find_open(&path, Some(i)).and_then(|o| self.tab(o)) {
             self.alert("The file is already opened in Notepad++.", "", &["OK"]);
             self.tab_view().selectTabViewItem(Some(&other.item));

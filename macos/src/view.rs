@@ -166,11 +166,11 @@ pub fn fold_props(lang: &str) -> Vec<(&'static str, &'static str)> {
     [base, extra].concat()
 }
 
-const LANGS: &str = include_str!("../../PowerEditor/src/langs.model.xml");
+pub(crate) const LANGS: &str = include_str!("../../PowerEditor/src/langs.model.xml");
 
-// Tab width and tab use from the langs.model.xml tabSettings (Lang::setTabInfo), else the Notepad++ default: 4 with tabs.
-pub fn tab_settings(lang: &str) -> (usize, bool) {
-    let info = LANGS
+// The tabSettings value of a language in langs.model.xml, when Lang::setTabInfo uses it.
+pub fn model_tab_info(lang: &str) -> Option<usize> {
+    LANGS
         .lines()
         .find(|l| l.trim().starts_with(&format!("<Language name=\"{lang}\" ")))
         .and_then(|l| {
@@ -181,8 +181,7 @@ pub fn tab_settings(lang: &str) -> (usize, bool) {
                 .parse::<usize>()
                 .ok()
         })
-        .filter(|i| i & 0x7F != 0);
-    info.map_or((4, true), |i| (i & 0x7F, i & 0x80 == 0))
+        .filter(|i| i & 0x7F != 0)
 }
 
 // ScintillaEditView::isNeededFolderMargin.
@@ -370,9 +369,10 @@ impl App {
         sci::setup_indent_guides(v, python_style_indent(lang), o.on[GUIDES]);
         sci::setup_wrap(v, o.on[WRAP], o.on[WRAP_SYMBOL]);
         sci::set_zoom(v, o.zoom);
+        crate::prefs::apply_editor(v, lang, c);
     }
 
-    fn apply_view_all(&self) {
+    pub(crate) fn apply_view_all(&self) {
         let tabs: Vec<Tab> = self.ivars().tabs.borrow().clone();
         tabs.iter()
             .for_each(|t| self.apply_view(&t.view, lang_of(t), cfg()));
@@ -789,10 +789,10 @@ mod tests {
         );
         assert!(python_style_indent("cpp") && !python_style_indent("lua"));
         assert!(indent_based("python") && !indent_based("cpp"));
-        assert_eq!(tab_settings("python"), (4, false));
-        assert_eq!(tab_settings("yaml"), (4, false));
-        assert_eq!(tab_settings("cpp"), (4, true));
-        assert_eq!(tab_settings("normal"), (4, true));
+        assert_eq!(model_tab_info("python"), Some(0x84));
+        assert_eq!(model_tab_info("yaml"), Some(0x84));
+        assert_eq!(model_tab_info("cpp"), None);
+        assert_eq!(model_tab_info("normal"), None);
     }
 
     const H: isize = SC_FOLDLEVELHEADERFLAG;

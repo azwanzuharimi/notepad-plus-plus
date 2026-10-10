@@ -16,6 +16,7 @@ mod language;
 mod macros;
 mod mark;
 mod panel;
+mod prefs;
 mod run;
 mod sci;
 mod search;
@@ -36,7 +37,7 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControlStateValueOff,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSButton, NSControl, NSControlStateValueOff,
     NSControlStateValueOn, NSEvent, NSMenu, NSMenuDelegate, NSMenuItem, NSModalResponseOK,
     NSOpenPanel, NSOutlineView, NSOutlineViewDataSource, NSSplitView, NSTableColumn,
     NSTableView, NSTableViewDataSource, NSSplitViewDividerStyle, NSTabView, NSTabViewDelegate, NSTabViewItem,
@@ -160,9 +161,14 @@ define_class!(
         fn open_document(&self, _s: Option<&AnyObject>) {
             let p = NSOpenPanel::openPanel(self.mtm());
             p.setAllowsMultipleSelection(true);
+            let cur = self.current().and_then(|i| self.tab(i)?.path);
+            if let Some(d) = prefs::dialog_dir(cur.as_deref()) {
+                p.setDirectoryURL(Some(&objc2_foundation::NSURL::fileURLWithPath(&ns(&d.to_string_lossy()))));
+            }
             if p.runModal() == NSModalResponseOK {
                 for url in p.URLs() {
                     if let Some(path) = url.path() {
+                        prefs::used_file(Path::new(&path.to_string()));
                         self.open_path(Path::new(&path.to_string()));
                     }
                 }
@@ -1096,6 +1102,23 @@ define_class!(
 
     unsafe impl NSOutlineViewDataSource for App {}
 
+    impl App {
+        #[unsafe(method(showPreferences:))]
+        fn show_preferences_action(&self, _s: Option<&AnyObject>) {
+            self.show_preferences();
+        }
+
+        #[unsafe(method(prefChanged:))]
+        fn pref_changed_action(&self, s: &NSControl) {
+            self.pref_changed(s);
+        }
+
+        #[unsafe(method(prefBrowse:))]
+        fn pref_browse_action(&self, _s: Option<&AnyObject>) {
+            self.pref_browse();
+        }
+    }
+
     unsafe impl NSObjectProtocol for App {}
 
     unsafe impl NSApplicationDelegate for App {
@@ -1298,11 +1321,7 @@ impl App {
     }
 
     fn selected_line(&self) -> Option<String> {
-        let v = self.editor()?;
-        let (s, e) = sci::selection(&v);
-        let b = sci::doc(&v).range(s, e);
-        (s < e && b.len() <= 1024 && !b.contains(&b'\n') && !b.contains(&b'\r'))
-            .then(|| String::from_utf8_lossy(&b).into_owned())
+        self.find_fill_text(&*self.editor()?)
     }
 
     fn show_panel(&self, form: &Form, find: &NSTextField, focus: &NSTextField) {
@@ -1544,7 +1563,7 @@ impl App {
         match std::fs::read(path) {
             Ok(b) => {
                 let (enc, text, lost) = encoding::load(&b);
-                self.add_tab(Some(path.to_path_buf()), enc, &text, lost)
+                self.add_tab(Some(path.to_path_buf()), prefs::opened_encoding(enc, &b), &text, lost)
             }
             Err(e) => {
                 self.alert(
@@ -1557,18 +1576,21 @@ impl App {
     }
 
     fn add_tab(&self, path: Option<PathBuf>, enc: Enc, text: &[u8], lost: bool) {
+        let p = prefs::get();
+        let enc = if path.is_none() && text.is_empty() { p.new_doc_enc() } else { enc };
         let view = sci::new_view();
         sci::set_delegate(&view, self);
         sci::set_bytes(&view, text);
         sci::set_eol_mode(
             &view,
-            encoding::detect_eol(text).unwrap_or(encoding::SC_EOL_CRLF),
+            encoding::detect_eol(text).unwrap_or(p.new_doc_eol()),
         );
         sci::set_read_only(&view, self.ivars().replacing.get());
         self.macro_arm(&view);
-        let lang = path
-            .as_deref()
-            .and_then(|p| lang::language_for_path(cfg(), p));
+        let lang = match path.as_deref() {
+            Some(p) => lang::language_for_path(cfg(), p),
+            None => prefs::new_doc_language(),
+        };
         sci::apply_language(&view, cfg(), lang);
         self.apply_view(&view, lang.map_or("normal", |l| l.name.as_str()), cfg());
         sci::setup_bookmark_margin(&view, cfg());
@@ -1671,7 +1693,7 @@ impl App {
         }
         sci::set_eol_mode(
             &t.view,
-            encoding::detect_eol(&text).unwrap_or(encoding::SC_EOL_CRLF),
+            encoding::detect_eol(&text).unwrap_or(prefs::get().new_doc_eol()),
         );
         self.set_enc(i, e, false);
     }
@@ -1684,6 +1706,7 @@ impl App {
             return;
         };
         let v = &t.view;
+        prefs::line_number_width(v);
         let lang = language::tab_language(&t);
         let (ln, col, pos, sel) = sci::position_info(v);
         let c = |n: isize| search::commafy(n as usize);
@@ -1959,7 +1982,7 @@ fn main() {
     submenu(mtm, &bar, "View", view::view_menu(mtm, t));
     submenu(mtm, &bar, "Encoding", encoding_menu(mtm, t));
     submenu(mtm, &bar, "Language", language::language_menu(mtm, t));
-    submenu(mtm, &bar, "Settings", style_dlg::settings_menu(mtm, t));
+    submenu(mtm, &bar, "Settings", prefs::settings_menu(mtm, t));
     submenu(mtm, &bar, "Tools", tools::tools_menu(mtm, t));
     macros::menus(mtm, &bar, t);
     bar.addItem(&window::window_menu(mtm, &d));

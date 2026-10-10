@@ -8,6 +8,17 @@ Not affiliated with the Notepad++ project.
 
 ## Changes from Notepad++
 
+2026-10-10 (Preferences):
+
+- Settings > Preferences... (Cmd+,) opens the Notepad++ Preferences window: a list of pages on the left and the page on the right. The pages are Editing 1, Editing 2, Margins/Border/Edge, New Document, Default Directory, Recent Files History, Indentation, Highlighting, Searching, Auto-Completion, Cloud & Link, Search Engine, and MISC., with the Notepad++ labels and defaults.
+- A change applies at once (a slider when you release it) and is saved in the `<GUIConfigs>` element of `config.xml`, in the Notepad++ `<GUIConfig name="...">` format. The values of a Notepad++ `config.xml` from Windows are read. The other elements and attributes of the file stay as they are.
+- Applied now: current line indicator (frame width), caret width and blink rate, line wrap indent, smooth font, virtual space, Copy/Cut line without selection, scrolling beyond the last line, multi-editing, fold margin style, vertical edge columns (background mode), change history margin and text, line number margin (dynamic or constant width), padding, bookmark margin, the EOL, encoding, and language of new documents, "Apply to opened ANSI files", the Open and Save folder, the recent files options (with "Only File Name" and the customized length), tab size, tabs or spaces, and Backspace unindent (also for each language), and "Fill Find Field with Selected Text" (with the maximum length and the word under the caret).
+- The tab settings of a language are saved in `langs.xml` (the `tabSettings` and `backspaceUnindent` attributes of its `<Language>` element), as in Notepad++. When there is no `langs.xml`, the app first copies `langs.model.xml`, as Notepad++ does.
+- Highlighting: Smart Highlighting (Enable, Match case, Match whole word only) and the Style All Occurrences of Token options apply. Auto-Completion: the enable choice, the completion kind, "From Nth character", Ignore numbers, and the parameter hint apply.
+- Saved for other features, not used yet: Highlight Matching Tags, "Use Find dialog settings" and "Highlight another view" of Smart Highlighting, Insert Selection (TAB, ENTER), the brief list, Auto-Insert, Clickable Link, Search Engine, File Status Auto-Detection, and "Enable Column Selection to Multi-Editing".
+- `RememberLastSession` and `addNewDocumentOnStartup` of `config.xml` are used at start and at quit. The Backup page with "Remember current session for next launch" is not in the window yet.
+- Not done: the General, Toolbar, Tab Bar, Dark Mode (macOS uses the system appearance), File Association, Language, Print, Backup, Multi-Instance & Date, Delimiter, and Performance pages; the user defined auto-insert pairs; the Indentation auto-indent choice.
+
 2026-10-10 (User Defined Languages):
 
 - The Notepad++ UDL lexer (`lexilla/lexers/LexUser.cxx`) is built without changes. It includes `windows.h` only for `_itoa`. The small header `src/shim/windows.h` gives that function. Before, an empty lexer took its place.
@@ -51,7 +62,7 @@ Not affiliated with the Notepad++ project.
 
 - Edit > Auto-Completion: Function Completion (Ctrl+Space), Word Completion (Cmd+Return), Function Parameters Hint (Ctrl+Shift+Space), Previous and Next Hint (Opt+Up, Opt+Down), and Path Completion (Ctrl+Opt+Space). The Space keys use Ctrl, because Cmd+Space is Spotlight.
 - The 34 files in `PowerEditor/installer/APIs` are built into the app. The file name is the language name, as in Notepad++. `coffee.xml` is not used, because the language name is `coffeescript` (the same in Notepad++).
-- The Notepad++ defaults apply: function and word completion after 1 character, numbers ignored, a parameter hint on `(` and `,`, and no auto-insert of pairs or close tags. There is no Preferences page for these settings yet.
+- The Notepad++ defaults apply: function and word completion after 1 character, numbers ignored, a parameter hint on `(` and `,`, and no auto-insert of pairs or close tags. Preferences > Auto-Completion changes them.
 - Path completion lists the files of a Unix path that starts with `/` or `~/`. The path starts at the last `/` or `~/` at the line start or after a space, a quote, or `(`, as Notepad++ does with `C:`. A path can contain spaces, but a `/` right after a space starts a new path.
 - Ctrl+Space and Ctrl+Opt+Space are also the macOS shortcuts to change the input source. If you use more than one input source, macOS can take these keys first. Change them in System Settings > Keyboard > Keyboard Shortcuts > Input Sources.
 - Function Parameters Previous Hint and Next Hint are disabled when no call tip shows, so Opt+Up and Opt+Down work in text fields. Notepad++ keeps them enabled.
@@ -72,7 +83,7 @@ Not affiliated with the Notepad++ project.
 
 - Search > Mark... (Cmd+Shift+M, because Cmd+M minimizes on macOS) opens a Mark panel: Find what, Bookmark line, Purge for each search, Match whole word only, Match case, Wrap around, In selection, Search Mode, Mark All, Clear all marks, and Copy Marked Text. Marks use the "Find Mark Style" colour (indicator 31). There is no Backward direction option.
 - Search menu: Style All Occurrences of Token, Style One Token, Clear Style, Jump Up, Jump Down, and Copy Styled Text, with the "Mark Style 1" to "Mark Style 5" colours. Style All uses whole word and no match case, as in Notepad++. Jump Down is Ctrl+1..5 and Ctrl+0 as in Notepad++. Jump Up is Ctrl+Opt (not Ctrl+Shift), because AppKit does not match Shift with a digit.
-- Smart highlighting is on, as in Notepad++: when a whole word is selected, its other occurrences in the visible lines get the "Smart Highlighting" colour (whole word, no match case). It runs 50 ms after the last screen update. There is no Highlight matching tags for XML and HTML.
+- Smart highlighting is on, as in Notepad++: when a whole word is selected, its other occurrences in the visible lines get the "Smart Highlighting" colour (whole word, no match case; Preferences > Highlighting changes this). It runs 50 ms after the last screen update. There is no Highlight matching tags for XML and HTML.
 - Window menu: Sort By (10 orders), Windows..., and the open documents (up to 40, as in Notepad++) with a check on the active tab. The Windows dialog has the Name, Path, Type, Size, and Modified time columns. A click on a column header sorts the list, and a second click reverses it. Activate, Save, Close window(s), Sort tabs, and OK work as in Notepad++. Sort tabs without a column click sorts by name first. Cancel in Close window(s) keeps that document and goes on with the next one.
 - A macro records the style token commands, as in Notepad++. It does not record Mark..., Sort By, or Windows....
 - Type is the language name from the file extension. Modified time is the time of the file on disk.
@@ -106,7 +117,7 @@ Not affiliated with the Notepad++ project.
 - File > Load Session... and Save Session... use the Notepad++ `session.xml` format. Sessions from Notepad++ on Windows load; files that do not exist are skipped. The files of the second view open in the same tab bar.
 - Recent files: the last 10 closed files show at the end of the File menu, with Restore Recent Closed File (Shift+Cmd+T), Open All Recent Files, and Empty Recent Files List. The list is in the `<History>` element of `config.xml`. `nbMaxFile` and `inSubMenu` in that file change the size and the place of the list. A recent file that does not exist leaves the list, and Notepad++'s "Create it?" question shows.
 - The settings folder is `~/Library/Application Support/notepadpp-mac/`. Each file is written to a temporary file first, then renamed. Before each write, the old `session.xml` is copied to `session.xml.inCaseOfCorruption.bak`, and that copy is used when `session.xml` does not load, as in Notepad++. If `config.xml` cannot be read, an alert shows at start and the app does not write `config.xml`.
-- Not done: the backup of new and modified tabs (snapshot mode); bookmarks and folds in sessions; the wrapped first line position; customLength (the list always shows the full path).
+- Not done: the backup of new and modified tabs (snapshot mode); bookmarks and folds in sessions; the wrapped first line position.
 - Tools menu: MD5, SHA-1, SHA-256, and SHA-512, each with Generate..., Generate from files..., and Generate from selection into clipboard. The hashes come from macOS CommonCrypto.
 - As in Notepad++, the selection and the Generate... text stop at the first NUL byte. The selection hash uses the UTF-8 bytes of the tab, also when the file encoding is different.
 - In Generate..., the text box uses LF line ends. A hash of more than one line is different from Notepad++ on Windows (CR LF). Generate from files... skips a file larger than 4 GiB.
