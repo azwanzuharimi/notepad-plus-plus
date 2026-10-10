@@ -502,6 +502,7 @@ impl App {
                 w.setTitlebarAppearsTransparent(true);
                 w.setTitleVisibility(NSWindowTitleVisibility::Hidden);
                 self.show_status_bar(false);
+                crate::toolbar::hide_without_saving(true);
                 POST_IT.with(|p| *p.borrow_mut() = Some(saved));
             }
             Some(saved) => {
@@ -515,6 +516,7 @@ impl App {
                 w.setTitlebarAppearsTransparent(saved.transparent);
                 w.setTitleVisibility(saved.title);
                 self.show_status_bar(true);
+                crate::toolbar::hide_without_saving(false);
                 self.tab_bar_menu_for(self.doc_tabs(0));
                 self.tab_bar_menu_for(self.doc_tabs(1));
             }
