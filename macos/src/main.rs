@@ -2,13 +2,17 @@
 mod autoc;
 mod backup;
 mod binary;
+mod charpanel;
+mod cliphistory;
 mod comment;
 mod column;
 mod config;
 mod context_menu;
 mod docking;
+mod docmap;
 mod edit;
 mod encoding;
+mod filebrowser;
 mod fileops;
 mod filestatus;
 mod finder;
@@ -1157,6 +1161,38 @@ define_class!(
         #[unsafe(method(distractionFree:))]
         fn distraction_free_action(&self, _s: Option<&AnyObject>) {
             self.distraction_free();
+        }
+    }
+
+    impl App {
+        #[unsafe(method(toggleDocMap:))]
+        fn toggle_doc_map(&self, _s: Option<&AnyObject>) {
+            self.toggle_panel(docking::DOC_MAP);
+        }
+
+        #[unsafe(method(toggleFolderAsWorkspace:))]
+        fn toggle_folder_as_workspace(&self, _s: Option<&AnyObject>) {
+            self.folders_toggle();
+        }
+
+        #[unsafe(method(openFolderAsWorkspace:))]
+        fn open_folder_as_workspace_action(&self, _s: Option<&AnyObject>) {
+            self.open_folder_as_workspace();
+        }
+
+        #[unsafe(method(containingFolderAsWorkspace:))]
+        fn containing_folder_as_workspace_action(&self, _s: Option<&AnyObject>) {
+            self.containing_folder_as_workspace();
+        }
+
+        #[unsafe(method(toggleClipboardHistory:))]
+        fn toggle_clipboard_history(&self, _s: Option<&AnyObject>) {
+            self.toggle_panel(docking::CLIPBOARD);
+        }
+
+        #[unsafe(method(toggleCharPanel:))]
+        fn toggle_char_panel(&self, _s: Option<&AnyObject>) {
+            self.toggle_panel(docking::CHARS);
         }
     }
 

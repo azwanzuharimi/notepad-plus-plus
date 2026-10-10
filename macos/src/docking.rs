@@ -2,25 +2,47 @@
 use crate::funclist::{self, Node};
 use crate::{language, ns, sci, App};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::runtime::{AnyObject, NSObject, ProtocolObject, Sel};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSButton, NSControlStateValueOff, NSControlStateValueOn, NSImage,
-    NSImageCell, NSOutlineView, NSScrollView, NSSearchField, NSSplitView, NSSplitViewDividerStyle,
+    NSApplication, NSApplicationDidBecomeActiveNotification,
+    NSApplicationWillTerminateNotification, NSAutoresizingMaskOptions, NSButton,
+    NSControlStateValueOff, NSControlStateValueOn, NSImage, NSImageCell, NSMenu, NSMenuDelegate,
+    NSMenuItem, NSOutlineView, NSOutlineViewDataSource, NSScrollView, NSSearchField,
+    NSSegmentDistribution, NSSegmentedControl, NSSplitView, NSSplitViewDividerStyle,
     NSTableColumn, NSTableColumnResizingOptions, NSTableView, NSTableViewColumnAutoresizingStyle,
-    NSTextField, NSView,
+    NSTableViewDataSource, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
-use objc2_foundation::{NSIndexSet, NSNumber, NSPoint, NSRect, NSSize};
-use std::cell::{Cell, RefCell};
+use objc2_foundation::{
+    NSIndexSet, NSNotification, NSNotificationCenter, NSNumber, NSObjectProtocol, NSPoint, NSRect,
+    NSSize, NSTimer,
+};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 
+// Panel ids; Document List and Function List keep the ids that the View menu gives them.
 pub const LEFT: isize = 0;
 pub const RIGHT: isize = 1;
+pub const DOC_MAP: isize = 2;
+pub const FOLDERS: isize = 3;
+pub const CLIPBOARD: isize = 4;
+pub const CHARS: isize = 5;
 const TITLE_H: f64 = 24.;
 const TOOLBAR_H: f64 = 28.;
+const TAB_H: f64 = 26.;
 const WIDTH: f64 = 250.;
 // Port only: Notepad++ parses any size on the main thread.
 const PARSE_LIMIT: isize = 10 * 1024 * 1024;
+
+// Title and default side (0 left, 1 right) of each panel, as Notepad_plus.cpp launch* sets DWS_DF_CONT_LEFT or DWS_DF_CONT_RIGHT.
+const PANELS: [(&str, usize); 6] = [
+    ("Document List", 0),
+    ("Function List", 1),
+    ("Document Map", 1),
+    ("Folder as Workspace", 0),
+    ("Clipboard History", 1),
+    ("ASCII Codes Insertion Panel", 1),
+];
 
 struct Item {
     label: String,
@@ -29,11 +51,24 @@ struct Item {
     obj: Retained<NSNumber>,
 }
 
-// Two docking areas next to the editor: Document List on the left and Function List on the right, the Notepad++ defaults.
+// A docking area: a caption, the open panels, and a tab strip when two or more panels are open, as a Notepad++ DockingCont.
+struct Side {
+    view: Retained<NSView>,
+    title: Retained<NSTextField>,
+    close: Retained<NSButton>,
+    tabs: Retained<NSSegmentedControl>,
+    open: RefCell<Vec<isize>>,
+    active: Cell<isize>,
+}
+
+// Two docking areas next to the editor, left and right, as the Notepad++ defaults.
 pub struct Dock {
     outer: Retained<NSSplitView>,
-    panes: [Retained<NSView>; 2],
+    sides: [Side; 2],
     widths: Cell<[f64; 2]>,
+    contents: RefCell<[Option<Retained<NSView>>; 6]>,
+    pub(crate) target: Retained<PanelTarget>,
+    ticking: Cell<bool>,
     docs: Retained<NSTableView>,
     funcs: Retained<NSOutlineView>,
     search: Retained<NSSearchField>,
@@ -43,7 +78,108 @@ pub struct Dock {
     key: RefCell<String>,
     mark: Cell<(isize, isize)>,
     state: RefCell<HashMap<String, (bool, String)>>,
+    pub(crate) map: OnceCell<crate::docmap::Map>,
+    pub(crate) folders: OnceCell<crate::filebrowser::Folders>,
+    pub(crate) clips: OnceCell<crate::cliphistory::Clips>,
+    pub(crate) chars: OnceCell<crate::charpanel::Chars>,
 }
+
+define_class!(
+    // Receives the actions, data requests and notifications of the panels.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = Retained<App>]
+    pub(crate) struct PanelTarget;
+
+    impl PanelTarget {
+        #[unsafe(method(dockTab:))]
+        fn dock_tab(&self, s: &NSSegmentedControl) {
+            self.ivars().dock_tab(s);
+        }
+
+        #[unsafe(method(panelTick:))]
+        fn tick(&self, _t: Option<&AnyObject>) {
+            self.ivars().panels_tick();
+        }
+
+        #[unsafe(method(appActive:))]
+        fn app_active(&self, _n: &NSNotification) {
+            self.ivars().folders_refresh();
+        }
+
+        #[unsafe(method(appWillQuit:))]
+        fn app_will_quit(&self, _n: &NSNotification) {
+            self.ivars().folders_save();
+        }
+
+        #[unsafe(method(clipInsert:))]
+        fn clip_insert(&self, _s: Option<&AnyObject>) {
+            self.ivars().clips_insert();
+        }
+
+        #[unsafe(method(charInsert:))]
+        fn char_insert(&self, _s: Option<&AnyObject>) {
+            self.ivars().chars_insert();
+        }
+
+        #[unsafe(method(folderOpen:))]
+        fn folder_open(&self, _s: Option<&AnyObject>) {
+            self.ivars().folders_open();
+        }
+
+        #[unsafe(method(folderCmd:))]
+        fn folder_cmd(&self, s: &NSMenuItem) {
+            self.ivars().folders_cmd(s.tag());
+        }
+    }
+
+    unsafe impl NSObjectProtocol for PanelTarget {}
+
+    unsafe impl NSTableViewDataSource for PanelTarget {
+        #[unsafe(method(numberOfRowsInTableView:))]
+        fn rows(&self, t: &NSTableView) -> isize {
+            match t.identifier().map(|i| i.to_string()).as_deref() {
+                Some("clips") => self.ivars().clips_count(),
+                Some("chars") => 256,
+                _ => 0,
+            }
+        }
+
+        #[unsafe(method_id(tableView:objectValueForTableColumn:row:))]
+        fn value(&self, t: &NSTableView, c: Option<&NSTableColumn>, row: isize) -> Option<Retained<AnyObject>> {
+            self.ivars().panel_cell(t, c, row)
+        }
+    }
+
+    unsafe impl NSOutlineViewDataSource for PanelTarget {
+        #[unsafe(method(outlineView:numberOfChildrenOfItem:))]
+        fn count(&self, _o: &NSOutlineView, item: Option<&AnyObject>) -> isize {
+            self.ivars().folders_count(item)
+        }
+
+        #[unsafe(method_id(outlineView:child:ofItem:))]
+        fn child(&self, _o: &NSOutlineView, n: isize, item: Option<&AnyObject>) -> Option<Retained<AnyObject>> {
+            self.ivars().folders_child(n, item)
+        }
+
+        #[unsafe(method(outlineView:isItemExpandable:))]
+        fn expandable(&self, _o: &NSOutlineView, item: &AnyObject) -> bool {
+            self.ivars().folders_expandable(item)
+        }
+
+        #[unsafe(method_id(outlineView:objectValueForTableColumn:byItem:))]
+        fn object(&self, _o: &NSOutlineView, _c: Option<&NSTableColumn>, item: Option<&AnyObject>) -> Option<Retained<AnyObject>> {
+            self.ivars().folders_value(item)
+        }
+    }
+
+    unsafe impl NSMenuDelegate for PanelTarget {
+        #[unsafe(method(menuNeedsUpdate:))]
+        fn menu_needs_update(&self, m: &NSMenu) {
+            self.ivars().folders_menu(m);
+        }
+    }
+);
 
 // PathFindExtension: the text from the last dot, if no space follows it.
 pub fn split_ext(name: &str) -> (&str, &str) {
@@ -63,8 +199,12 @@ pub fn center_scroll(line: isize, first: isize, last: isize, on_screen: isize) -
     line - middle
 }
 
-fn frame(x: f64, y: f64, w: f64, h: f64) -> NSRect {
+pub(crate) fn frame(x: f64, y: f64, w: f64, h: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
+}
+
+pub(crate) fn fill() -> NSAutoresizingMaskOptions {
+    NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable
 }
 
 fn symbol_button(
@@ -89,18 +229,16 @@ fn symbol_button(
     b
 }
 
-fn scroll(mtm: MainThreadMarker, doc: &NSView, w: f64, h: f64) -> Retained<NSScrollView> {
+pub(crate) fn scroll(mtm: MainThreadMarker, doc: &NSView, w: f64, h: f64) -> Retained<NSScrollView> {
     let s = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame(0., 0., w, h));
     s.setHasVerticalScroller(true);
     s.setAutohidesScrollers(true);
     s.setDocumentView(Some(doc));
-    s.setAutoresizingMask(
-        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-    );
+    s.setAutoresizingMask(fill());
     s
 }
 
-fn column(mtm: MainThreadMarker, id: &str, title: &str, w: f64) -> Retained<NSTableColumn> {
+pub(crate) fn column(mtm: MainThreadMarker, id: &str, title: &str, w: f64) -> Retained<NSTableColumn> {
     let c = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), &ns(id));
     c.setTitle(&ns(title));
     c.setWidth(w);
@@ -108,34 +246,55 @@ fn column(mtm: MainThreadMarker, id: &str, title: &str, w: f64) -> Retained<NSTa
     c
 }
 
-// A docked panel: a caption with the title and a close button above the content.
-fn pane(
-    mtm: MainThreadMarker,
-    title: &str,
-    side: isize,
-    t: &AnyObject,
-    h: f64,
-) -> Retained<NSView> {
+// The view of one panel, which the docking area sizes.
+pub(crate) fn content_box(mtm: MainThreadMarker) -> Retained<NSView> {
+    let b = NSView::initWithFrame(NSView::alloc(mtm), frame(0., 0., WIDTH, 400.));
+    b.setAutoresizingMask(fill());
+    b
+}
+
+// A docking area: a caption with the title and a close button above the panels, and the tab strip below them.
+fn side(mtm: MainThreadMarker, t: &AnyObject, target: &PanelTarget, h: f64) -> Side {
     let p = NSView::initWithFrame(NSView::alloc(mtm), frame(0., 0., WIDTH, h));
-    let label = NSTextField::labelWithString(&ns(title), mtm);
-    label.setFrame(frame(6., h - TITLE_H + 4., WIDTH - 32., 16.));
-    label.setAutoresizingMask(
+    let title = NSTextField::labelWithString(&ns(""), mtm);
+    title.setFrame(frame(6., h - TITLE_H + 4., WIDTH - 32., 16.));
+    title.setAutoresizingMask(
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewMinYMargin,
     );
-    p.addSubview(&label);
+    p.addSubview(&title);
     let close = symbol_button(mtm, "xmark", "Close", t, sel!(dockClose:));
-    close.setTag(side);
     close.setFrame(frame(WIDTH - 24., h - TITLE_H + 2., 20., 20.));
     close.setAutoresizingMask(
         NSAutoresizingMaskOptions::ViewMinXMargin | NSAutoresizingMaskOptions::ViewMinYMargin,
     );
     p.addSubview(&close);
+    let tabs = NSSegmentedControl::initWithFrame(
+        NSSegmentedControl::alloc(mtm),
+        frame(2., 2., WIDTH - 4., TAB_H - 4.),
+    );
+    tabs.setSegmentDistribution(NSSegmentDistribution::Fill);
+    tabs.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewMaxYMargin,
+    );
+    unsafe {
+        tabs.setTarget(Some(target));
+        tabs.setAction(Some(sel!(dockTab:)));
+    }
+    tabs.setHidden(true);
+    p.addSubview(&tabs);
     p.setHidden(true);
-    p
+    Side {
+        view: p,
+        title,
+        close,
+        tabs,
+        open: RefCell::new(vec![]),
+        active: Cell::new(-1),
+    }
 }
 
 impl App {
-    fn dock_ui(&self) -> Option<&Dock> {
+    pub(crate) fn dock_ui(&self) -> Option<&Dock> {
         self.ivars().dock.get()
     }
 
@@ -145,11 +304,18 @@ impl App {
         let t: &AnyObject = self;
         let f = center.frame();
         let h = f.size.height;
+        let ch = h - TITLE_H;
+        let target: Retained<PanelTarget> = {
+            let this = PanelTarget::alloc(mtm).set_ivars(self.retain());
+            unsafe { msg_send![super(this), init] }
+        };
         let outer = NSSplitView::initWithFrame(NSSplitView::alloc(mtm), f);
         outer.setVertical(true);
         outer.setDividerStyle(NSSplitViewDividerStyle::Thin);
         outer.setAutoresizingMask(center.autoresizingMask());
-        let left = pane(mtm, "Document List", LEFT, t, h);
+        let sides = [side(mtm, t, &target, h), side(mtm, t, &target, h)];
+        let left = content_box(mtm);
+        left.setFrame(frame(0., 0., WIDTH, ch));
         let docs = NSTableView::initWithFrame(NSTableView::alloc(mtm), frame(0., 0., WIDTH, 100.));
         let status = column(mtm, "status", "", 18.);
         let name = column(mtm, "name", "Name", WIDTH - 90.);
@@ -168,8 +334,9 @@ impl App {
             docs.setTarget(Some(t));
             docs.setAction(Some(sel!(docListClick:)));
         }
-        left.addSubview(&scroll(mtm, &docs, WIDTH, h - TITLE_H));
-        let right = pane(mtm, "Function List", RIGHT, t, h);
+        left.addSubview(&scroll(mtm, &docs, WIDTH, ch));
+        let right = content_box(mtm);
+        right.setFrame(frame(0., 0., WIDTH, ch));
         let funcs =
             NSOutlineView::initWithFrame(NSOutlineView::alloc(mtm), frame(0., 0., WIDTH, 100.));
         let c = column(mtm, "name", "", WIDTH);
@@ -185,10 +352,10 @@ impl App {
         funcs.setColumnAutoresizingStyle(
             NSTableViewColumnAutoresizingStyle::UniformColumnAutoresizingStyle,
         );
-        right.addSubview(&scroll(mtm, &funcs, WIDTH, h - TITLE_H - TOOLBAR_H));
+        right.addSubview(&scroll(mtm, &funcs, WIDTH, ch - TOOLBAR_H));
         let search = NSSearchField::initWithFrame(
             NSSearchField::alloc(mtm),
-            frame(4., h - TITLE_H - TOOLBAR_H + 3., WIDTH - 60., 22.),
+            frame(4., ch - TOOLBAR_H + 3., WIDTH - 60., 22.),
         );
         unsafe {
             search.setTarget(Some(t));
@@ -215,23 +382,43 @@ impl App {
         for (i, b) in [&sort, &reload].iter().enumerate() {
             b.setFrame(frame(
                 WIDTH - 52. + 24. * i as f64,
-                h - TITLE_H - TOOLBAR_H + 4.,
+                ch - TOOLBAR_H + 4.,
                 20.,
                 20.,
             ));
             b.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin | top);
             right.addSubview(b);
         }
-        outer.addSubview(&left);
+        sides[0].view.addSubview(&left);
+        sides[1].view.addSubview(&right);
+        outer.addSubview(&sides[0].view);
         outer.addSubview(center);
-        outer.addSubview(&right);
+        outer.addSubview(&sides[1].view);
         for (i, p) in [260., 250., 260.].iter().enumerate() {
             outer.setHoldingPriority_forSubviewAtIndex(*p, i as isize);
         }
+        let nc = NSNotificationCenter::defaultCenter();
+        unsafe {
+            nc.addObserver_selector_name_object(
+                &target,
+                sel!(appActive:),
+                Some(NSApplicationDidBecomeActiveNotification),
+                None,
+            );
+            nc.addObserver_selector_name_object(
+                &target,
+                sel!(appWillQuit:),
+                Some(NSApplicationWillTerminateNotification),
+                None,
+            );
+        }
         let _ = self.ivars().dock.set(Dock {
             outer: outer.clone(),
-            panes: [left, right],
+            sides,
             widths: Cell::new([WIDTH, WIDTH]),
+            contents: RefCell::new([Some(left), Some(right), None, None, None, None]),
+            target,
+            ticking: Cell::new(false),
             docs,
             funcs,
             search,
@@ -241,6 +428,10 @@ impl App {
             key: RefCell::new(String::new()),
             mark: Cell::new((1, 0)),
             state: RefCell::new(HashMap::new()),
+            map: OnceCell::new(),
+            folders: OnceCell::new(),
+            clips: OnceCell::new(),
+            chars: OnceCell::new(),
         });
         outer
     }
@@ -253,46 +444,224 @@ impl App {
         }
     }
 
-    pub(crate) fn panel_visible(&self, side: isize) -> bool {
+    // True when the panel is open, also when an other tab of its docking area shows; the menu checkmark.
+    pub(crate) fn panel_visible(&self, id: isize) -> bool {
+        let side = PANELS.get(id as usize).map(|p| p.1);
         self.dock_ui()
-            .and_then(|d| d.panes.get(side as usize))
-            .is_some_and(|p| !p.isHidden())
+            .zip(side)
+            .is_some_and(|(d, s)| d.sides[s].open.borrow().contains(&id))
     }
 
-    // NppCommands.cpp IDM_VIEW_DOCLIST and IDM_VIEW_FUNC_LIST: show the panel, or close it when it shows.
-    pub(crate) fn toggle_panel(&self, side: isize) {
+    // True when the panel is open and its tab is the active one.
+    pub(crate) fn panel_shown(&self, id: isize) -> bool {
+        let side = PANELS.get(id as usize).map(|p| p.1);
+        self.dock_ui()
+            .zip(side)
+            .is_some_and(|(d, s)| self.panel_visible(id) && d.sides[s].active.get() == id)
+    }
+
+    // The checkmark of a panel menu item; None for other actions.
+    pub(crate) fn panel_checked(&self, action: Sel) -> Option<bool> {
+        let id = [
+            (sel!(toggleDocMap:), DOC_MAP),
+            (sel!(toggleFolderAsWorkspace:), FOLDERS),
+            (sel!(toggleClipboardHistory:), CLIPBOARD),
+            (sel!(toggleCharPanel:), CHARS),
+        ]
+        .into_iter()
+        .find(|(a, _)| *a == action)?
+        .1;
+        Some(self.panel_visible(id))
+    }
+
+    // NppCommands.cpp IDM_VIEW_DOCLIST, IDM_VIEW_FUNC_LIST, IDM_VIEW_DOC_MAP and the other panel commands: close an open panel, or open it.
+    pub(crate) fn toggle_panel(&self, id: isize) {
+        if self.panel_visible(id) {
+            self.dock_close_panel(id);
+        } else {
+            self.dock_open_panel(id);
+        }
+    }
+
+    // Opens the panel as the active tab of its docking area.
+    pub(crate) fn dock_open_panel(&self, id: isize) {
         let Some(d) = self.dock_ui() else { return };
-        let Some(p) = d.panes.get(side as usize) else {
+        let Some(&(_, side)) = PANELS.get(id as usize) else {
             return;
         };
+        let Some(c) = self.panel_content(id) else {
+            return;
+        };
+        let s = &d.sides[side];
+        if unsafe { c.superview() }.is_none() {
+            s.view.addSubview(&c);
+        }
+        if !s.open.borrow().contains(&id) {
+            s.open.borrow_mut().push(id);
+        }
+        s.active.set(id);
+        if s.view.isHidden() {
+            self.show_side(side, true);
+        }
+        self.layout_side(side);
+        self.panel_refresh(id);
+    }
+
+    // DockingCont::hideToolbar: the tab before the closed one becomes active; the area hides when no panel is left.
+    pub(crate) fn dock_close_panel(&self, id: isize) {
+        let Some(d) = self.dock_ui() else { return };
+        let Some(&(_, side)) = PANELS.get(id as usize) else {
+            return;
+        };
+        let s = &d.sides[side];
+        let Some(k) = s.open.borrow().iter().position(|&x| x == id) else {
+            return;
+        };
+        s.open.borrow_mut().remove(k);
+        if let Some(c) = &d.contents.borrow()[id as usize] {
+            c.setHidden(true);
+        }
+        let next = s.open.borrow().get(k.saturating_sub(1)).copied();
+        let Some(next) = next else {
+            self.show_side(side, false);
+            self.focus();
+            return;
+        };
+        if s.active.get() == id {
+            s.active.set(next);
+        }
+        self.layout_side(side);
+        self.panel_refresh(s.active.get());
+    }
+
+    fn panel_content(&self, id: isize) -> Option<Retained<NSView>> {
+        let d = self.dock_ui()?;
+        if let Some(c) = d.contents.borrow().get(id as usize)?.clone() {
+            return Some(c);
+        }
+        let c = match id {
+            DOC_MAP => self.doc_map_build(),
+            FOLDERS => self.folders_build(),
+            CLIPBOARD => self.clips_build(),
+            CHARS => self.chars_build(),
+            _ => return None,
+        };
+        if matches!(id, DOC_MAP | CLIPBOARD) && !d.ticking.replace(true) {
+            unsafe {
+                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                    0.5,
+                    &d.target,
+                    sel!(panelTick:),
+                    None,
+                    true,
+                )
+            };
+        }
+        d.contents.borrow_mut()[id as usize] = Some(c.clone());
+        Some(c)
+    }
+
+    fn panel_refresh(&self, id: isize) {
+        match id {
+            LEFT => self.doc_list_reload(),
+            RIGHT => self.function_list_reload(),
+            DOC_MAP => self.doc_map_reload(),
+            FOLDERS => self.folders_refresh(),
+            CHARS => self.chars_sync(),
+            _ => {}
+        }
+    }
+
+    // Shows only the active panel, sizes it above the tab strip, and sets the caption, the close button and the tabs.
+    fn layout_side(&self, side: usize) {
+        let Some(d) = self.dock_ui() else { return };
+        let s = &d.sides[side];
+        let open = s.open.borrow().clone();
+        let active = s.active.get();
+        let size = s.view.bounds().size;
+        let tab_h = if open.len() > 1 { TAB_H } else { 0. };
+        for (id, c) in d.contents.borrow().iter().enumerate() {
+            let Some(c) = c.as_ref().filter(|_| PANELS[id].1 == side) else {
+                continue;
+            };
+            let id = id as isize;
+            c.setHidden(id != active || !open.contains(&id));
+            c.setFrame(frame(0., tab_h, size.width, size.height - TITLE_H - tab_h));
+        }
+        s.tabs.setHidden(open.len() < 2);
+        s.tabs.setSegmentCount(open.len() as isize);
+        for (k, id) in open.iter().enumerate() {
+            s.tabs.setLabel_forSegment(&ns(PANELS[*id as usize].0), k as isize);
+        }
+        if let Some(k) = open.iter().position(|&x| x == active) {
+            s.tabs.setSelectedSegment(k as isize);
+        }
+        s.title.setStringValue(&ns(PANELS.get(active as usize).map_or("", |p| p.0)));
+        s.close.setTag(active);
+    }
+
+    // A click on a tab of the tab strip makes its panel the active one.
+    fn dock_tab(&self, tabs: &NSSegmentedControl) {
+        let Some(d) = self.dock_ui() else { return };
+        let Some(side) = d.sides.iter().position(|s| std::ptr::eq(&*s.tabs, tabs)) else {
+            return;
+        };
+        let id = d.sides[side]
+            .open
+            .borrow()
+            .get(tabs.selectedSegment() as usize)
+            .copied();
+        if let Some(id) = id {
+            d.sides[side].active.set(id);
+            self.layout_side(side);
+            self.panel_refresh(id);
+        }
+    }
+
+    // Shows or hides a docking area and keeps the widths that the user gave the areas.
+    fn show_side(&self, side: usize, show: bool) {
+        let Some(d) = self.dock_ui() else { return };
         let mut widths = d.widths.get();
-        for (w, pane) in widths.iter_mut().zip(&d.panes) {
-            if !pane.isHidden() {
-                *w = pane.frame().size.width.max(80.);
+        for (w, s) in widths.iter_mut().zip(&d.sides) {
+            if !s.view.isHidden() {
+                *w = s.view.frame().size.width.max(80.);
             }
         }
         d.widths.set(widths);
-        let show = p.isHidden();
-        p.setHidden(!show);
+        d.sides[side].view.setHidden(!show);
         d.outer.adjustSubviews();
         let total = d.outer.frame().size.width;
         let gap = d.outer.dividerThickness();
-        if !d.panes[0].isHidden() {
+        if !d.sides[0].view.isHidden() {
             d.outer.setPosition_ofDividerAtIndex(widths[0], 0);
         }
-        if !d.panes[1].isHidden() {
+        if !d.sides[1].view.isHidden() {
             d.outer.setPosition_ofDividerAtIndex(total - widths[1] - gap, 1);
         }
-        if show {
-            self.doc_list_reload();
-            self.function_list_reload();
-        } else {
-            self.focus();
+    }
+
+    fn panel_cell(&self, t: &NSTableView, c: Option<&NSTableColumn>, row: isize) -> Option<Retained<AnyObject>> {
+        let s = match t.identifier()?.to_string().as_str() {
+            "clips" => self.clips_text(row)?,
+            "chars" => self.chars_text(row, c?.identifier().to_string().parse().ok()?)?,
+            _ => return None,
+        };
+        Some(Retained::into_super(Retained::into_super(ns(&s))))
+    }
+
+    fn panels_tick(&self) {
+        if !NSApplication::sharedApplication(self.mtm()).isActive() {
+            return;
+        }
+        self.clips_poll();
+        if self.panel_shown(DOC_MAP) {
+            self.doc_map_scroll();
         }
     }
 
     // VerticalFileSwitcher: the open documents in tab order, with the current one selected.
     pub(crate) fn doc_list_reload(&self) {
+        self.chars_sync();
         if !self.panel_visible(LEFT) {
             return;
         }
@@ -353,6 +722,7 @@ impl App {
 
     // FunctionListPanel::reload: parse the current tab with the parser of its language; keep sort and search per file.
     pub(crate) fn function_list_reload(&self) {
+        self.doc_map_reload();
         if !self.panel_visible(RIGHT) {
             return;
         }
@@ -503,6 +873,7 @@ impl App {
 
     // FunctionListPanel::markEntry: select the last function that starts on or before the caret line.
     pub(crate) fn function_list_mark(&self) {
+        self.doc_map_scroll();
         if !self.panel_visible(RIGHT) {
             return;
         }

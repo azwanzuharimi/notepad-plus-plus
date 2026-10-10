@@ -1296,6 +1296,8 @@ pub fn edit_menu(mtm: MainThreadMarker, t: Option<&AnyObject>) -> Vec<Retained<N
         sep(),
         crate::column::column_mode_item(mtm, t),
         crate::column::column_editor_item(mtm, t),
+        item(mtm, "Character Panel", sel!(toggleCharPanel:), "", t),
+        item(mtm, "Clipboard History", sel!(toggleClipboardHistory:), "", t),
         sep(),
         nested(
             mtm,
